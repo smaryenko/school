@@ -391,7 +391,7 @@ function renderLearnMode() {
     if (availW > 0 && availH > 0) {
         const scaleByW = (availW - gapSpace) / (numShapes * maxShapeW);
         const scaleByH = availH / maxShapeH;
-        learnScale = Math.min(scaleByW, scaleByH, 1);
+        learnScale = Math.min(scaleByW, scaleByH, 1.5);
         learnScale = Math.max(learnScale, 0.3);
     }
 
@@ -454,8 +454,8 @@ function renderLearnMode() {
                 const resultSvg = createShapeForNumber(total);
                 const origW = parseInt(resultSvg.getAttribute('width'));
                 const origH = parseInt(resultSvg.getAttribute('height'));
-                resultSvg.setAttribute('width', Math.round(origW * 0.6));
-                resultSvg.setAttribute('height', Math.round(origH * 0.6));
+                resultSvg.setAttribute('width', Math.round(origW * 1.0));
+                resultSvg.setAttribute('height', Math.round(origH * 1.0));
                 shapeContainer.appendChild(resultSvg);
                 sumDisplay.appendChild(shapeContainer);
             }
