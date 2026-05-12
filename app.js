@@ -205,7 +205,12 @@ function createShapeForNumber(number) {
     if (number <= 10) {
         return createShapeSVG(NUMICON_SHAPES[number - 1]);
     }
-    return createCompositeSVG(number);
+    if (number <= 20) {
+        return createCompositeSVG(number);
+    }
+    // For numbers > 20, show as 20 + remainder recursively
+    // but cap at 20 for display purposes
+    return createCompositeSVG(20);
 }
 
 // ============ PANEL ============
@@ -379,9 +384,13 @@ function renderLearnMode() {
     const availW = zoneRect.width - 64; // padding
     const availH = zoneRect.height - 64;
 
-    const scaleByW = (availW - gapSpace) / (numShapes * maxShapeW);
-    const scaleByH = availH / maxShapeH;
-    const learnScale = Math.min(scaleByW, scaleByH, 1);
+    let learnScale = 1;
+    if (availW > 0 && availH > 0) {
+        const scaleByW = (availW - gapSpace) / (numShapes * maxShapeW);
+        const scaleByH = availH / maxShapeH;
+        learnScale = Math.min(scaleByW, scaleByH, 1);
+        learnScale = Math.max(learnScale, 0.3);
+    }
 
     // Render dropped shapes with operator between them
     learnShapes.forEach((num, i) => {
@@ -436,15 +445,17 @@ function renderLearnMode() {
             text.textContent = `${learnShapes[0]} + ${learnShapes[1]} = ${total}`;
             sumDisplay.appendChild(text);
 
-            const shapeContainer = document.createElement('span');
-            shapeContainer.className = 'sum-shape';
-            const resultSvg = createShapeForNumber(total);
-            const origW = parseInt(resultSvg.getAttribute('width'));
-            const origH = parseInt(resultSvg.getAttribute('height'));
-            resultSvg.setAttribute('width', Math.round(origW * 0.6));
-            resultSvg.setAttribute('height', Math.round(origH * 0.6));
-            shapeContainer.appendChild(resultSvg);
-            sumDisplay.appendChild(shapeContainer);
+            if (total <= 20) {
+                const shapeContainer = document.createElement('span');
+                shapeContainer.className = 'sum-shape';
+                const resultSvg = createShapeForNumber(total);
+                const origW = parseInt(resultSvg.getAttribute('width'));
+                const origH = parseInt(resultSvg.getAttribute('height'));
+                resultSvg.setAttribute('width', Math.round(origW * 0.6));
+                resultSvg.setAttribute('height', Math.round(origH * 0.6));
+                shapeContainer.appendChild(resultSvg);
+                sumDisplay.appendChild(shapeContainer);
+            }
         } else {
             // Compare mode
             const a = learnShapes[0];
