@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Numicon Explorer</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-layout">
+        <div class="toolbar">
+            <div class="mode-toggle">
+                <button id="learnBtn" class="toggle-btn active">Learn</button>
+                <button id="quizBtn" class="toggle-btn">Quiz</button>
+            </div>
+            <div class="operation-toggle" id="operationToggle">
+                <button id="sumBtn" class="toggle-btn active">Sum</button>
+                <button id="compareBtn" class="toggle-btn">Compare</button>
+            </div>
+        </div>
+        <div class="main-content">
+            <aside class="panel" aria-label="Numicon shapes palette">
+                <h2>Shapes</h2>
+                <div class="panel-shapes" id="panelShapes"></div>
+            </aside>
+            <main class="workspace" id="workspace" aria-label="Working area">
+                <!-- Learn mode -->
+                <div class="learn-mode" id="learnMode">
+                    <div class="workspace-hint" id="workspaceHint">
+                        <p>Drag 2 shapes here to see their sum</p>
+                    </div>
+                    <button class="clear-btn" id="clearBtn">Clear</button>
+                    <div class="learn-drop-zone" id="learnDropZone"></div>
+                    <div class="sum-display" id="sumDisplay"></div>
+                </div>
+
+                <!-- Quiz mode -->
+                <div class="quiz-mode hidden" id="quizMode">
+                    <div class="quiz-question" id="quizQuestion"></div>
+                    <div class="quiz-choices" id="quizChoices"></div>
+                    <div class="quiz-bottom">
+                        <div class="quiz-feedback" id="quizFeedback"></div>
+                        <button class="quiz-next" id="quizNext">Next Question</button>
+                        <div class="quiz-score" id="quizScore"></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
