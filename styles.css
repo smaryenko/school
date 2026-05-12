@@ -152,8 +152,9 @@ body {
 
 .learn-drop-zone {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
+    align-content: center;
     gap: 1.5rem;
     width: 90%;
     flex: 1;
@@ -161,6 +162,13 @@ body {
     border-radius: 16px;
     padding: 2rem;
     transition: background 0.2s;
+    flex-wrap: wrap;
+}
+
+.learn-drop-zone .learn-shape {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 .learn-drop-zone:empty {
@@ -195,6 +203,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
 }
 
