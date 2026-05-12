@@ -657,7 +657,6 @@ function switchMode(mode) {
 
     document.getElementById('learnMode').classList.toggle('hidden', mode !== 'learn');
     document.getElementById('quizMode').classList.toggle('hidden', mode !== 'quiz');
-    document.getElementById('clearBtn').classList.toggle('hidden', mode !== 'learn');
     document.getElementById('operationToggle').classList.toggle('hidden', false);
 
     if (mode === 'quiz') {
@@ -694,7 +693,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('quizBtn').addEventListener('click', () => switchMode('quiz'));
     document.getElementById('sumBtn').addEventListener('click', () => switchOperation('sum'));
     document.getElementById('compareBtn').addEventListener('click', () => switchOperation('compare'));
-    document.getElementById('clearBtn').addEventListener('click', clearLearn);
     document.getElementById('quizNext').addEventListener('click', generateQuizQuestion);
 
     window.addEventListener('resize', () => requestAnimationFrame(renderPanel));
