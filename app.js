@@ -324,10 +324,10 @@ function onDragEnd(e) {
 
     dragState.ghost.remove();
 
-    // Check if dropped on the learn drop zone
-    const dropZone = document.getElementById('learnDropZone');
-    if (dropZone) {
-        const rect = dropZone.getBoundingClientRect();
+    // Check if dropped on the workspace (entire area, not just drop zone)
+    if (currentMode === 'learn') {
+        const workspace = document.getElementById('workspace');
+        const rect = workspace.getBoundingClientRect();
         if (clientX >= rect.left && clientX <= rect.right &&
             clientY >= rect.top && clientY <= rect.bottom) {
             addLearnShape(dragState.number);
