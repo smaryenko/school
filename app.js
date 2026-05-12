@@ -689,11 +689,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLearnMode();
     });
 
-    document.getElementById('learnBtn').addEventListener('click', () => switchMode('learn'));
-    document.getElementById('quizBtn').addEventListener('click', () => switchMode('quiz'));
-    document.getElementById('sumBtn').addEventListener('click', () => switchOperation('sum'));
-    document.getElementById('compareBtn').addEventListener('click', () => switchOperation('compare'));
-    document.getElementById('quizNext').addEventListener('click', generateQuizQuestion);
+    document.getElementById('learnBtn')?.addEventListener('click', () => switchMode('learn'));
+    document.getElementById('quizBtn')?.addEventListener('click', () => switchMode('quiz'));
+    document.getElementById('sumBtn')?.addEventListener('click', () => switchOperation('sum'));
+    document.getElementById('compareBtn')?.addEventListener('click', () => switchOperation('compare'));
+    document.getElementById('quizNext')?.addEventListener('click', generateQuizQuestion);
 
     window.addEventListener('resize', () => requestAnimationFrame(renderPanel));
 });
