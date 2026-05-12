@@ -49,19 +49,7 @@ body {
 }
 
 .clear-btn {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    padding: 10px 24px;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    background: white;
-    color: #4a5568;
-    font-size: 1.1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
-    z-index: 10;
+    display: none;
 }
 
 .clear-btn:hover {
@@ -153,7 +141,7 @@ body {
     transition: opacity 0.3s;
     text-align: center;
     position: absolute;
-    top: 45%;
+    top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
 }
@@ -523,14 +511,15 @@ body {
         font-size: 0.8rem;
     }
 
-    .clear-btn {
-        padding: 8px 18px;
-        font-size: 1rem;
-    }
-
     .learn-drop-zone {
         width: 90%;
         height: 50%;
+    }
+
+    .learn-drop-zone {
+        top: 10px;
+        transform: translate(-50%, 0);
+        height: 55%;
     }
 
     .sum-display {

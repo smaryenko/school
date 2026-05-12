@@ -360,7 +360,10 @@ function renderLearnMode() {
     const sumDisplay = document.getElementById('sumDisplay');
     const hint = document.getElementById('workspaceHint');
 
-    dropZone.innerHTML = '';
+    // Remove everything except the hint
+    Array.from(dropZone.children).forEach(child => {
+        if (child !== hint) child.remove();
+    });
 
     if (learnShapes.length === 0) {
         hint.classList.remove('hidden');
