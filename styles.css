@@ -121,6 +121,35 @@ body {
     box-shadow: 0 1px 3px rgba(72, 187, 120, 0.4);
 }
 
+.style-toggle {
+    display: flex;
+    background: #e2e8f0;
+    border-radius: 8px;
+    padding: 3px;
+}
+
+.style-toggle .toggle-btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #4a5568;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.style-toggle .toggle-btn:hover {
+    color: #2d3748;
+}
+
+.style-toggle .toggle-btn.active {
+    background: #9f7aea;
+    color: white;
+    box-shadow: 0 1px 3px rgba(159, 122, 234, 0.4);
+}
+
 /* Learn Mode */
 .learn-mode {
     position: absolute;
@@ -285,7 +314,14 @@ body {
     font-size: 2rem;
     font-weight: 700;
     color: #4a5568;
-    margin-bottom: 26px;
+    /* Stretch to the full row height and center the symbol vertically, but
+       offset upward by the shape's number-label area (label height + gap) so
+       the operator lines up with the middle of the shapes, not the labels. */
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: calc(1.2rem + 6px);
 }
 
 .quiz-shape-wrapper {
@@ -301,6 +337,7 @@ body {
     font-size: 1.2rem;
     font-weight: 700;
     color: #4a5568;
+    line-height: 1;
 }
 
 .quiz-choices {
@@ -512,7 +549,8 @@ body {
     }
 
     .mode-toggle .toggle-btn,
-    .operation-toggle .toggle-btn {
+    .operation-toggle .toggle-btn,
+    .style-toggle .toggle-btn {
         padding: 4px 10px;
         font-size: 0.8rem;
     }

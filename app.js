@@ -21,10 +21,140 @@ const CORNER_R = 6;
 // State
 let learnShapes = []; // shapes dropped in learn mode (max 2)
 let currentMode = 'learn'; // 'learn' or 'quiz'
-let currentOperation = 'sum'; // 'sum' or 'compare'
+let currentOperation = 'sum'; // 'sum', 'subtract', or 'compare'
+let currentShapeStyle = 'numberblocks'; // 'numicon' or 'numberblocks'
 let dragState = null;
 let quizScore = 0;
 let quizTotal = 0;
+
+// Colors used for the Numicon shapes (0-10)
+const NUMBER_COLORS = {
+    0: '#cbd5e0',
+    1: '#e87c2a',
+    2: '#2b7de0',
+    3: '#7ec8e3',
+    4: '#2e8b57',
+    5: '#dc3545',
+    6: '#f5c542',
+    7: '#e75480',
+    8: '#a0522d',
+    9: '#1a3a6b',
+    10: '#b8b8b8'
+};
+
+// Numberblocks series colors for the solid-color numbers (1-6, 8).
+// 7 (rainbow), 9 (three greys) and 10 (white, red border) are handled
+// specially in blockColorsForNumber because they are not a single color.
+// Palette based on the widely used Numberblocks community pixel-art hex codes.
+const NUMBERBLOCK_COLORS = {
+    1: '#ff1a1a', // red
+    2: '#ff8c00', // orange
+    3: '#ffe000', // yellow
+    4: '#00c000', // green
+    5: '#00b4ff', // blue
+    6: '#8a2be2', // indigo
+    8: '#ff4fa3'  // magenta / pink
+};
+
+// The seven rainbow block colors Numberblock Seven is made of (bottom to top).
+const SEVEN_RAINBOW = ['#ff1a1a', '#ff8c00', '#ffe000', '#00c000', '#00b4ff', '#8a2be2', '#c030e0'];
+// Nine's three shades of grey, grouped in threes (bottom to top).
+const NINE_GREYS = ['#9aa0a6', '#c2c7cc', '#e4e7ea'];
+
+const TEN_BLOCK_FILL = '#ffffff';
+const TEN_BLOCK_BORDER = '#ff1a1a'; // ten blocks are white with a red border
+const DEFAULT_BORDER = 'rgba(0,0,0,0.25)';
+
+// Colors for the "ones" part (1-9). Reuses the single-digit palette.
+function onesColor(d) {
+    if (d === 7) return SEVEN_RAINBOW; // array: handled per block
+    if (d === 9) return NINE_GREYS;    // array: handled per block
+    return NUMBERBLOCK_COLORS[d] || '#888888';
+}
+
+// Returns an array of per-block fill colors (bottom -> top) for a Numberblock.
+function blockColorsForNumber(n) {
+    if (n === 7) {
+        return SEVEN_RAINBOW.slice();
+    }
+    if (n === 9) {
+        // Three blocks of each grey shade.
+        const out = [];
+        for (let i = 0; i < 9; i++) out.push(NINE_GREYS[Math.floor(i / 3)]);
+        return out;
+    }
+    if (n === 10) {
+        return Array.from({ length: 10 }, () => TEN_BLOCK_FILL);
+    }
+    if (n > 10) {
+        // 11-20: a full ten (white blocks) plus the remainder in the ones color.
+        const ones = n - 10;
+        const tenPart = Array.from({ length: 10 }, () => TEN_BLOCK_FILL);
+        if (ones === 10) {
+            // 20 is two tens: all white.
+            return tenPart.concat(Array.from({ length: 10 }, () => TEN_BLOCK_FILL));
+        }
+        const oc = onesColor(ones);
+        let onesPart;
+        if (Array.isArray(oc)) {
+            // 17 or 19: remainder blocks follow the special per-block palette.
+            onesPart = [];
+            for (let i = 0; i < ones; i++) {
+                onesPart.push(ones === 9
+                    ? NINE_GREYS[Math.floor(i / 3)]
+                    : SEVEN_RAINBOW[i]);
+            }
+        } else {
+            onesPart = Array.from({ length: ones }, () => oc);
+        }
+        return tenPart.concat(onesPart);
+    }
+    const base = NUMBERBLOCK_COLORS[n] || '#888888';
+    return Array.from({ length: n }, () => base);
+}
+
+// Returns per-block border info (bottom -> top): the ten-block part gets a
+// red border, the ones part gets the default subtle border.
+function blockBordersForNumber(n) {
+    const makeBorder = isTen => ({
+        color: isTen ? TEN_BLOCK_BORDER : DEFAULT_BORDER,
+        width: isTen ? 2.5 : 1.5
+    });
+    if (n === 10) {
+        return Array.from({ length: 10 }, () => makeBorder(true));
+    }
+    if (n > 10) {
+        const ones = n - 10;
+        const tenPart = Array.from({ length: 10 }, () => makeBorder(true));
+        const onesIsTen = ones === 10; // 20: second ten is also a ten block
+        const onesPart = Array.from({ length: ones }, () => makeBorder(onesIsTen));
+        return tenPart.concat(onesPart);
+    }
+    return Array.from({ length: n }, () => makeBorder(false));
+}
+
+// How a Numberblock's cubes are split across columns (bottom-to-top,
+// left-to-right). Each entry is the number of cubes in that column.
+// Matches the shapes used in the series for these numbers.
+function blockColumnLayout(n) {
+    switch (n) {
+        case 4: return [2, 2];       // 2x2
+        case 6: return [3, 3];       // 2x3
+        case 8: return [4, 4];       // 2x4
+        case 9: return [3, 3, 3];    // 3x3
+        case 10: return [5, 5];      // 2x5, like the Numicon ten
+        default:
+            if (n > 10) {
+                // 11-20: the ten renders as a 2x5 block (two columns of 5),
+                // like the Numicon ten. The remainder reuses the standalone
+                // layout of its ones digit, so e.g. 16 looks like 10 + 6,
+                // 19 looks like 10 + 9, etc.
+                if (n === 20) return [5, 5, 5, 5]; // two 2x5 tens
+                return [5, 5, ...blockColumnLayout(n - 10)];
+            }
+            return [n]; // single column stack (1,2,3,5,7)
+    }
+}
 
 // ============ SVG RENDERING ============
 
@@ -202,6 +332,12 @@ function createCompositeSVG(number) {
 }
 
 function createShapeForNumber(number) {
+    if (currentShapeStyle === 'numberblocks') {
+        return createNumberblockSVG(number);
+    }
+    if (number === 0) {
+        return createZeroSVG();
+    }
     if (number <= 10) {
         return createShapeSVG(NUMICON_SHAPES[number - 1]);
     }
@@ -211,6 +347,154 @@ function createShapeForNumber(number) {
     // For numbers > 20, show as 20 + remainder recursively
     // but cap at 20 for display purposes
     return createCompositeSVG(20);
+}
+
+// ============ ZERO SHAPE (Numicon style) ============
+
+function createZeroSVG() {
+    // An empty, flat tile with a dashed outline to represent "nothing".
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const width = HOLE_SPACING + PAD * 2;
+    const height = HOLE_SPACING + PAD * 2;
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('aria-label', 'Numicon shape for number 0 (empty)');
+    svg.setAttribute('role', 'img');
+
+    const r = CORNER_R;
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', 1.5);
+    rect.setAttribute('y', 1.5);
+    rect.setAttribute('width', width - 3);
+    rect.setAttribute('height', height - 3);
+    rect.setAttribute('rx', r);
+    rect.setAttribute('fill', 'rgba(203,213,224,0.25)');
+    rect.setAttribute('stroke', NUMBER_COLORS[0]);
+    rect.setAttribute('stroke-width', '3');
+    rect.setAttribute('stroke-dasharray', '6 5');
+    svg.appendChild(rect);
+
+    return svg;
+}
+
+// ============ NUMBERBLOCKS STYLE ============
+
+// Renders a number as a stack of unit cubes (Numberblocks style):
+// a single column of 1x1 blocks with a simple face on the top block.
+function createNumberblockSVG(number) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const CUBE = 34; // size of one cube in px
+
+    if (number === 0) {
+        // Zero: a flat dashed outline, no cubes.
+        const width = CUBE + PAD * 2;
+        const height = CUBE + PAD * 2;
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', width);
+        svg.setAttribute('height', height);
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('aria-label', 'Numberblocks figure for number 0 (empty)');
+        svg.setAttribute('role', 'img');
+
+        const rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', 1.5);
+        rect.setAttribute('y', 1.5);
+        rect.setAttribute('width', width - 3);
+        rect.setAttribute('height', height - 3);
+        rect.setAttribute('rx', 4);
+        rect.setAttribute('fill', 'rgba(203,213,224,0.25)');
+        rect.setAttribute('stroke', NUMBER_COLORS[0]);
+        rect.setAttribute('stroke-width', '3');
+        rect.setAttribute('stroke-dasharray', '6 5');
+        svg.appendChild(rect);
+        return svg;
+    }
+
+    const n = Math.min(number, 20);
+    const blockColors = blockColorsForNumber(n);
+    const blockBorders = blockBordersForNumber(n);
+    const layout = blockColumnLayout(n); // cubes per column, left to right
+
+    const cols = layout.length;
+    const rowsTall = Math.max(...layout);
+    const width = cols * CUBE + PAD * 2;
+    const height = rowsTall * CUBE + PAD * 2;
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('aria-label', `Numberblocks figure for number ${number}`);
+    svg.setAttribute('role', 'img');
+
+    // Place blocks column by column, bottom to top. The face goes on the
+    // topmost block of the first (leftmost) column, which reads as the head.
+    let placed = 0;
+    const faceCol = 0;
+    const firstColCount = layout[0];
+    for (let col = 0; col < cols; col++) {
+        const cubesInCol = layout[col];
+        for (let i = 0; i < cubesInCol; i++) {
+            const x = PAD + col * CUBE;
+            // Stack upward: the first cube in a column sits at the bottom.
+            const y = height - PAD - (i + 1) * CUBE;
+
+            const border = blockBorders[placed] || { color: DEFAULT_BORDER, width: 1.5 };
+            const cube = document.createElementNS(svgNS, 'rect');
+            cube.setAttribute('x', x);
+            cube.setAttribute('y', y);
+            cube.setAttribute('width', CUBE);
+            cube.setAttribute('height', CUBE);
+            cube.setAttribute('fill', blockColors[placed] || blockColors[blockColors.length - 1]);
+            cube.setAttribute('stroke', border.color);
+            cube.setAttribute('stroke-width', border.width);
+            svg.appendChild(cube);
+
+            if (col === faceCol && i === firstColCount - 1) {
+                addNumberblockFace(svg, x, y, CUBE);
+            }
+            placed++;
+        }
+    }
+
+    return svg;
+}
+
+function addNumberblockFace(svg, x, y, cube) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const eyeR = cube * 0.09;
+    const eyeY = y + cube * 0.4;
+
+    [x + cube * 0.33, x + cube * 0.67].forEach(ex => {
+        const eyeWhite = document.createElementNS(svgNS, 'circle');
+        eyeWhite.setAttribute('cx', ex);
+        eyeWhite.setAttribute('cy', eyeY);
+        eyeWhite.setAttribute('r', eyeR * 1.8);
+        eyeWhite.setAttribute('fill', 'white');
+        eyeWhite.setAttribute('stroke', 'rgba(0,0,0,0.3)');
+        eyeWhite.setAttribute('stroke-width', '1');
+        svg.appendChild(eyeWhite);
+
+        const pupil = document.createElementNS(svgNS, 'circle');
+        pupil.setAttribute('cx', ex);
+        pupil.setAttribute('cy', eyeY);
+        pupil.setAttribute('r', eyeR);
+        pupil.setAttribute('fill', '#1a202c');
+        svg.appendChild(pupil);
+    });
+
+    // Simple smile.
+    const smile = document.createElementNS(svgNS, 'path');
+    const sy = y + cube * 0.62;
+    smile.setAttribute('d', `M ${x + cube * 0.3} ${sy} Q ${x + cube * 0.5} ${sy + cube * 0.18} ${x + cube * 0.7} ${sy}`);
+    smile.setAttribute('fill', 'none');
+    smile.setAttribute('stroke', '#1a202c');
+    smile.setAttribute('stroke-width', '2');
+    smile.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(smile);
 }
 
 // ============ PANEL ============
@@ -228,12 +512,14 @@ function calculatePanelScale() {
         return;
     }
 
-    const isMobile = window.innerWidth <= 768;
-    const cols = isMobile ? 5 : 5;
-    const rows = isMobile ? 4 : 4;
+    const cols = 5;
+    const rows = Math.ceil(21 / cols); // numbers 0-20
 
-    // Tallest shape: 10-shape = 5*32 + 16 = 176, plus label ~18px, plus padding ~8px
-    const maxShapeH = 176 + 26;
+    // Tallest shape depends on style. Numicon: 10-shape = 5*32 + 16 = 176.
+    // Numberblocks: Seven is a single column of 7 cubes = 7*34 + 16 = 254.
+    // Use the taller of the two so neither style overflows its cell.
+    const tallestShapeH = currentShapeStyle === 'numberblocks' ? 254 : 176;
+    const maxShapeH = tallestShapeH + 26; // plus label + padding
     // Widest composite shape (20 = 10+10 side by side): ~152
     const maxShapeW = 152;
 
@@ -252,7 +538,7 @@ function renderPanel() {
     panel.innerHTML = '';
     calculatePanelScale();
 
-    for (let n = 1; n <= 20; n++) {
+    for (let n = 0; n <= 20; n++) {
         const item = document.createElement('div');
         item.className = 'panel-shape';
         item.dataset.number = n;
@@ -367,9 +653,15 @@ function renderLearnMode() {
 
     if (learnShapes.length === 0) {
         hint.classList.remove('hidden');
-        hint.querySelector('p').textContent = currentOperation === 'sum'
-            ? 'Drag 2 shapes here to see their sum'
-            : 'Drag 2 shapes here to compare them';
+        let hintText;
+        if (currentOperation === 'sum') {
+            hintText = 'Drag 2 shapes here to see their sum';
+        } else if (currentOperation === 'subtract') {
+            hintText = 'Drag 2 shapes here to subtract them';
+        } else {
+            hintText = 'Drag 2 shapes here to compare them';
+        }
+        hint.querySelector('p').textContent = hintText;
         sumDisplay.classList.remove('visible');
         sumDisplay.innerHTML = '';
         return;
@@ -395,8 +687,18 @@ function renderLearnMode() {
         learnScale = Math.max(learnScale, 0.3);
     }
 
+    // Build display items that remember their original index so removal
+    // stays correct even when we reorder for subtraction.
+    let displayItems = learnShapes.map((num, idx) => ({ num, idx }));
+    // For subtraction we always show the larger number first so the
+    // result is never negative, regardless of the order shapes were dropped.
+    if (currentOperation === 'subtract' && displayItems.length === 2) {
+        displayItems.sort((a, b) => b.num - a.num);
+    }
+
     // Render dropped shapes with operator between them
-    learnShapes.forEach((num, i) => {
+    displayItems.forEach((entry, i) => {
+        const num = entry.num;
         const shapeWrapper = document.createElement('div');
         shapeWrapper.className = 'learn-shape';
 
@@ -415,19 +717,21 @@ function renderLearnMode() {
         const del = document.createElement('button');
         del.className = 'delete-btn';
         del.textContent = '×';
-        del.addEventListener('click', () => removeLearnShape(i));
+        del.addEventListener('click', () => removeLearnShape(entry.idx));
         shapeWrapper.appendChild(del);
 
         dropZone.appendChild(shapeWrapper);
 
-        if (i < learnShapes.length - 1) {
+        if (i < displayItems.length - 1) {
             const op = document.createElement('span');
             op.className = 'plus-sign';
             if (currentOperation === 'sum') {
                 op.textContent = '+';
-            } else if (learnShapes.length === 2) {
-                const a = learnShapes[0];
-                const b = learnShapes[1];
+            } else if (currentOperation === 'subtract') {
+                op.textContent = '−';
+            } else if (displayItems.length === 2) {
+                const a = displayItems[0].num;
+                const b = displayItems[1].num;
                 op.textContent = a > b ? '>' : a < b ? '<' : '=';
             } else {
                 op.textContent = '?';
@@ -459,6 +763,22 @@ function renderLearnMode() {
                 shapeContainer.appendChild(resultSvg);
                 sumDisplay.appendChild(shapeContainer);
             }
+        } else if (currentOperation === 'subtract') {
+            // Always subtract the smaller number from the larger one so the
+            // result is never negative.
+            const big = Math.max(learnShapes[0], learnShapes[1]);
+            const small = Math.min(learnShapes[0], learnShapes[1]);
+            const diff = big - small;
+            const text = document.createElement('span');
+            text.className = 'sum-text';
+            text.textContent = `${big} − ${small} = ${diff}`;
+            sumDisplay.appendChild(text);
+
+            const shapeContainer = document.createElement('span');
+            shapeContainer.className = 'sum-shape';
+            const resultSvg = createShapeForNumber(diff);
+            shapeContainer.appendChild(resultSvg);
+            sumDisplay.appendChild(shapeContainer);
         } else {
             // Compare mode
             const a = learnShapes[0];
@@ -481,8 +801,24 @@ let quizAnswer = null;
 let quizAnswered = false;
 
 function generateQuizQuestion() {
-    const a = Math.floor(Math.random() * 10) + 1;
-    const b = Math.floor(Math.random() * 10) + 1;
+    // Operands span 0-20 (0 included so zero shows up in quizzes too).
+    let a, b;
+    if (currentOperation === 'sum') {
+        // Any operands, but keep the result within 0-20.
+        a = Math.floor(Math.random() * 21); // 0-20
+        b = Math.floor(Math.random() * (21 - a)); // 0..(20 - a)
+    } else if (currentOperation === 'subtract') {
+        // Any operands up to 20; show the larger first so the result is >= 0.
+        a = Math.floor(Math.random() * 21); // 0-20
+        b = Math.floor(Math.random() * 21); // 0-20
+        if (b > a) {
+            [a, b] = [b, a];
+        }
+    } else {
+        // Compare: any two numbers 0-20.
+        a = Math.floor(Math.random() * 21);
+        b = Math.floor(Math.random() * 21);
+    }
     quizAnswered = false;
 
     const questionEl = document.getElementById('quizQuestion');
@@ -505,12 +841,12 @@ function generateQuizQuestion() {
     shapeA.appendChild(labelA);
     questionEl.appendChild(shapeA);
 
-    if (currentOperation === 'sum') {
-        quizAnswer = a + b;
+    if (currentOperation === 'sum' || currentOperation === 'subtract') {
+        quizAnswer = currentOperation === 'sum' ? a + b : a - b;
 
         const op = document.createElement('span');
         op.className = 'quiz-operator';
-        op.textContent = '+';
+        op.textContent = currentOperation === 'sum' ? '+' : '−';
         questionEl.appendChild(op);
 
         const shapeB = document.createElement('div');
@@ -529,9 +865,11 @@ function generateQuizQuestion() {
 
         // Generate choices (correct + 3 wrong)
         const choices = new Set([quizAnswer]);
-        while (choices.size < 4) {
+        let guard = 0;
+        while (choices.size < 4 && guard < 100) {
+            guard++;
             let wrong = quizAnswer + Math.floor(Math.random() * 7) - 3;
-            if (wrong < 2) wrong = 2;
+            if (wrong < 0) wrong = 0;
             if (wrong > 20) wrong = 20;
             if (wrong !== quizAnswer) choices.add(wrong);
         }
@@ -667,11 +1005,25 @@ function switchMode(mode) {
 function switchOperation(op) {
     currentOperation = op;
     document.getElementById('sumBtn').classList.toggle('active', op === 'sum');
+    document.getElementById('subtractBtn').classList.toggle('active', op === 'subtract');
     document.getElementById('compareBtn').classList.toggle('active', op === 'compare');
     renderLearnMode();
     if (currentMode === 'quiz') {
         quizScore = 0;
         quizTotal = 0;
+        generateQuizQuestion();
+    }
+}
+
+function switchShapeStyle(style) {
+    currentShapeStyle = style;
+    document.getElementById('numiconBtn').classList.toggle('active', style === 'numicon');
+    document.getElementById('numberblocksBtn').classList.toggle('active', style === 'numberblocks');
+
+    // Re-render everything currently on screen with the new style.
+    renderPanel();
+    renderLearnMode();
+    if (currentMode === 'quiz') {
         generateQuizQuestion();
     }
 }
@@ -692,7 +1044,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('learnBtn')?.addEventListener('click', () => switchMode('learn'));
     document.getElementById('quizBtn')?.addEventListener('click', () => switchMode('quiz'));
     document.getElementById('sumBtn')?.addEventListener('click', () => switchOperation('sum'));
+    document.getElementById('subtractBtn')?.addEventListener('click', () => switchOperation('subtract'));
     document.getElementById('compareBtn')?.addEventListener('click', () => switchOperation('compare'));
+    document.getElementById('numiconBtn')?.addEventListener('click', () => switchShapeStyle('numicon'));
+    document.getElementById('numberblocksBtn')?.addEventListener('click', () => switchShapeStyle('numberblocks'));
     document.getElementById('quizNext')?.addEventListener('click', generateQuizQuestion);
 
     window.addEventListener('resize', () => requestAnimationFrame(renderPanel));
