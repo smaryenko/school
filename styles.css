@@ -411,6 +411,13 @@ body {
     width: 120px;
 }
 
+.quiz-shape-wrapper svg {
+    max-width: 100%;
+    max-height: 150px;
+    width: auto;
+    height: auto;
+}
+
 .quiz-shape-number {
     font-size: 1.2rem;
     font-weight: 700;
@@ -441,6 +448,15 @@ body {
     box-shadow: 0 2px 8px var(--shadow-soft);
     width: 120px;
     height: 150px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.quiz-choice svg {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
 }
 
 .quiz-choice:hover {

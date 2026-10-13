@@ -883,10 +883,15 @@ function generateQuizQuestion() {
             choice.dataset.value = num;
 
             const svg = createShapeForNumber(num);
+            // Let CSS size the shape to fit the card (viewBox preserves aspect
+            // ratio); keep the intrinsic width/height as the cap so narrow
+            // shapes aren't blown up past their natural size.
             const origW = parseInt(svg.getAttribute('width'));
             const origH = parseInt(svg.getAttribute('height'));
-            svg.setAttribute('width', Math.round(origW * 0.65));
-            svg.setAttribute('height', Math.round(origH * 0.65));
+            svg.style.maxWidth = `${origW}px`;
+            svg.style.maxHeight = `${origH}px`;
+            svg.removeAttribute('width');
+            svg.removeAttribute('height');
             choice.appendChild(svg);
 
             const label = document.createElement('span');
