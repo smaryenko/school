@@ -1035,11 +1035,51 @@ function clearLearn() {
 
 // ============ INIT ============
 
+// ============ THEME ============
+
+const THEME_KEY = 'numberExplorer.theme';
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+function resolveTheme() {
+    // Explicit user choice wins; otherwise follow the system setting.
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === 'light' || stored === 'dark') return stored;
+    return prefersDark.matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = document.getElementById('themeBtn');
+    if (btn) {
+        btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+        btn.setAttribute('title', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    }
+}
+
+function toggleTheme() {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+}
+
+// Apply as early as possible to avoid a flash of the wrong theme.
+applyTheme(resolveTheme());
+
+// Keep following the system when the user hasn't made an explicit choice.
+prefersDark.addEventListener('change', () => {
+    if (!localStorage.getItem(THEME_KEY)) {
+        applyTheme(prefersDark.matches ? 'dark' : 'light');
+    }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(() => {
         renderPanel();
         renderLearnMode();
     });
+
+    applyTheme(resolveTheme());
+    document.getElementById('themeBtn')?.addEventListener('click', toggleTheme);
 
     document.getElementById('learnBtn')?.addEventListener('click', () => switchMode('learn'));
     document.getElementById('quizBtn')?.addEventListener('click', () => switchMode('quiz'));
