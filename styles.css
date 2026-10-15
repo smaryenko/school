@@ -228,6 +228,38 @@ body {
     box-shadow: 0 1px 3px rgba(159, 122, 234, 0.4);
 }
 
+.sum-cap-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-toggle-track);
+    border-radius: 8px;
+    padding: 3px 12px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.sum-cap-control.hidden {
+    display: none;
+}
+
+.sum-cap-control label {
+    white-space: nowrap;
+}
+
+.sum-cap-control input[type="range"] {
+    width: 90px;
+    accent-color: #48bb78;
+    cursor: pointer;
+}
+
+.sum-cap-control #sumCapValue {
+    min-width: 1.5em;
+    text-align: center;
+    color: var(--text-strong);
+}
+
 /* Learn Mode */
 .learn-mode {
     position: absolute;
@@ -425,6 +457,17 @@ body {
     line-height: 1;
 }
 
+/* Operand tile with no shape (value > 20): center a big number instead. */
+.quiz-shape-wrapper-number {
+    justify-content: center;
+    min-height: 150px;
+}
+
+.quiz-shape-wrapper-number .quiz-shape-number {
+    font-size: 3rem;
+    color: var(--text-strong);
+}
+
 .quiz-choices {
     display: flex;
     gap: 1rem;
@@ -478,6 +521,12 @@ body {
     font-size: 1.1rem;
     font-weight: 700;
     color: var(--text-muted);
+}
+
+/* Answer choice with no shape (value > 20): show a big centered number. */
+.quiz-choice-number .choice-label {
+    font-size: 2.5rem;
+    color: var(--text-strong);
 }
 
 .quiz-choice-sign {
@@ -647,6 +696,16 @@ body {
     .style-toggle .toggle-btn {
         padding: 4px 10px;
         font-size: 0.8rem;
+    }
+
+    .sum-cap-control {
+        padding: 3px 10px;
+        font-size: 0.8rem;
+        gap: 6px;
+    }
+
+    .sum-cap-control input[type="range"] {
+        width: 70px;
     }
 
     .sum-display {

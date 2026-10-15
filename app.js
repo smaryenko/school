@@ -26,6 +26,7 @@ let currentShapeStyle = 'numberblocks'; // 'numicon' or 'numberblocks'
 let dragState = null;
 let quizScore = 0;
 let quizTotal = 0;
+let sumCap = 20; // max allowed answer for the sum quiz (slider: 10-30, step 5)
 
 // Colors used for the Numicon shapes (0-10)
 const NUMBER_COLORS = {
@@ -801,19 +802,33 @@ let quizAnswer = null;
 let quizAnswered = false;
 
 function generateQuizQuestion() {
-    // Operands span 0-20 (0 included so zero shows up in quizzes too).
+    // Operands include 0 so zero shows up in quizzes too. In sum mode they can
+    // reach the current sumCap (up to 40); subtract and compare stay within 0-20.
     let a, b;
     if (currentOperation === 'sum') {
-        // Any operands, but keep the result within 0-20.
-        a = Math.floor(Math.random() * 21); // 0-20
-        b = Math.floor(Math.random() * (21 - a)); // 0..(20 - a)
-    } else if (currentOperation === 'subtract') {
-        // Any operands up to 20; show the larger first so the result is >= 0.
-        a = Math.floor(Math.random() * 21); // 0-20
-        b = Math.floor(Math.random() * 21); // 0-20
-        if (b > a) {
-            [a, b] = [b, a];
+        // Pick uniformly among all (a, b) pairs with a + b <= sumCap.
+        // Sampling b from 0..(sumCap - a) after a uniform `a` would over-represent
+        // small values of b (e.g. 0 and 1 are valid for almost every a), so
+        // choose a flat index across every valid pair instead.
+        const pairs = [];
+        for (let x = 0; x <= sumCap; x++) {
+            for (let y = 0; y <= sumCap - x; y++) {
+                pairs.push([x, y]);
+            }
         }
+        [a, b] = pairs[Math.floor(Math.random() * pairs.length)];
+    } else if (currentOperation === 'subtract') {
+        // Pick uniformly among all (a, b) pairs with 0 <= b <= a <= 20.
+        // Drawing two uniform numbers and swapping to a >= b would skew the
+        // minuend large and the difference small, so flat-index the valid
+        // pairs instead (same approach as the sum quiz).
+        const pairs = [];
+        for (let x = 0; x <= 20; x++) {
+            for (let y = 0; y <= x; y++) {
+                pairs.push([x, y]);
+            }
+        }
+        [a, b] = pairs[Math.floor(Math.random() * pairs.length)];
     } else {
         // Compare: any two numbers 0-20.
         a = Math.floor(Math.random() * 21);
@@ -832,14 +847,24 @@ function generateQuizQuestion() {
 
     questionEl.innerHTML = '';
 
-    const shapeA = document.createElement('div');
-    shapeA.className = 'quiz-shape-wrapper';
-    shapeA.appendChild(createShapeForNumber(a));
-    const labelA = document.createElement('span');
-    labelA.className = 'quiz-shape-number';
-    labelA.textContent = a;
-    shapeA.appendChild(labelA);
-    questionEl.appendChild(shapeA);
+    // Build an operand tile: a shape (only for 0-20) plus its number label.
+    // Values above 20 have no shape, so show the number on its own.
+    const makeOperand = (n) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'quiz-shape-wrapper';
+        if (n <= 20) {
+            wrapper.appendChild(createShapeForNumber(n));
+        } else {
+            wrapper.classList.add('quiz-shape-wrapper-number');
+        }
+        const label = document.createElement('span');
+        label.className = 'quiz-shape-number';
+        label.textContent = n;
+        wrapper.appendChild(label);
+        return wrapper;
+    };
+
+    questionEl.appendChild(makeOperand(a));
 
     if (currentOperation === 'sum' || currentOperation === 'subtract') {
         quizAnswer = currentOperation === 'sum' ? a + b : a - b;
@@ -849,28 +874,23 @@ function generateQuizQuestion() {
         op.textContent = currentOperation === 'sum' ? '+' : '−';
         questionEl.appendChild(op);
 
-        const shapeB = document.createElement('div');
-        shapeB.className = 'quiz-shape-wrapper';
-        shapeB.appendChild(createShapeForNumber(b));
-        const labelB = document.createElement('span');
-        labelB.className = 'quiz-shape-number';
-        labelB.textContent = b;
-        shapeB.appendChild(labelB);
-        questionEl.appendChild(shapeB);
+        questionEl.appendChild(makeOperand(b));
 
         const eq = document.createElement('span');
         eq.className = 'quiz-operator';
         eq.textContent = '= ?';
         questionEl.appendChild(eq);
 
-        // Generate choices (correct + 3 wrong)
+        // Generate choices (correct + 3 wrong). Sum answers can reach the
+        // current cap; subtract answers always stay within 0-20.
+        const maxChoice = currentOperation === 'sum' ? sumCap : 20;
         const choices = new Set([quizAnswer]);
         let guard = 0;
         while (choices.size < 4 && guard < 100) {
             guard++;
             let wrong = quizAnswer + Math.floor(Math.random() * 7) - 3;
             if (wrong < 0) wrong = 0;
-            if (wrong > 20) wrong = 20;
+            if (wrong > maxChoice) wrong = maxChoice;
             if (wrong !== quizAnswer) choices.add(wrong);
         }
 
@@ -882,17 +902,22 @@ function generateQuizQuestion() {
             choice.className = 'quiz-choice';
             choice.dataset.value = num;
 
-            const svg = createShapeForNumber(num);
-            // Let CSS size the shape to fit the card (viewBox preserves aspect
-            // ratio); keep the intrinsic width/height as the cap so narrow
-            // shapes aren't blown up past their natural size.
-            const origW = parseInt(svg.getAttribute('width'));
-            const origH = parseInt(svg.getAttribute('height'));
-            svg.style.maxWidth = `${origW}px`;
-            svg.style.maxHeight = `${origH}px`;
-            svg.removeAttribute('width');
-            svg.removeAttribute('height');
-            choice.appendChild(svg);
+            // Shapes only exist for 0-20; above that, show the number alone.
+            if (num <= 20) {
+                const svg = createShapeForNumber(num);
+                // Let CSS size the shape to fit the card (viewBox preserves aspect
+                // ratio); keep the intrinsic width/height as the cap so narrow
+                // shapes aren't blown up past their natural size.
+                const origW = parseInt(svg.getAttribute('width'));
+                const origH = parseInt(svg.getAttribute('height'));
+                svg.style.maxWidth = `${origW}px`;
+                svg.style.maxHeight = `${origH}px`;
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                choice.appendChild(svg);
+            } else {
+                choice.classList.add('quiz-choice-number');
+            }
 
             const label = document.createElement('span');
             label.className = 'choice-label';
@@ -911,14 +936,7 @@ function generateQuizQuestion() {
         op.textContent = '?';
         questionEl.appendChild(op);
 
-        const shapeB = document.createElement('div');
-        shapeB.className = 'quiz-shape-wrapper';
-        shapeB.appendChild(createShapeForNumber(b));
-        const labelB = document.createElement('span');
-        labelB.className = 'quiz-shape-number';
-        labelB.textContent = b;
-        shapeB.appendChild(labelB);
-        questionEl.appendChild(shapeB);
+        questionEl.appendChild(makeOperand(b));
 
         const signs = ['<', '=', '>'];
         choicesEl.innerHTML = '';
@@ -992,6 +1010,14 @@ function updateQuizScore() {
 
 // ============ MODE SWITCHING ============
 
+// The max-sum slider only applies to the sum quiz, so show it only there.
+function updateSumCapVisibility() {
+    const control = document.getElementById('sumCapControl');
+    if (!control) return;
+    const show = currentMode === 'quiz' && currentOperation === 'sum';
+    control.classList.toggle('hidden', !show);
+}
+
 function switchMode(mode) {
     currentMode = mode;
 
@@ -1001,6 +1027,7 @@ function switchMode(mode) {
     document.getElementById('learnMode').classList.toggle('hidden', mode !== 'learn');
     document.getElementById('quizMode').classList.toggle('hidden', mode !== 'quiz');
     document.getElementById('operationToggle').classList.toggle('hidden', false);
+    updateSumCapVisibility();
 
     if (mode === 'quiz') {
         generateQuizQuestion();
@@ -1012,6 +1039,7 @@ function switchOperation(op) {
     document.getElementById('sumBtn').classList.toggle('active', op === 'sum');
     document.getElementById('subtractBtn').classList.toggle('active', op === 'subtract');
     document.getElementById('compareBtn').classList.toggle('active', op === 'compare');
+    updateSumCapVisibility();
     renderLearnMode();
     if (currentMode === 'quiz') {
         quizScore = 0;
@@ -1094,6 +1122,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('numiconBtn')?.addEventListener('click', () => switchShapeStyle('numicon'));
     document.getElementById('numberblocksBtn')?.addEventListener('click', () => switchShapeStyle('numberblocks'));
     document.getElementById('quizNext')?.addEventListener('click', generateQuizQuestion);
+
+    const sumCapSlider = document.getElementById('sumCapSlider');
+    sumCapSlider?.addEventListener('input', () => {
+        sumCap = parseInt(sumCapSlider.value, 10);
+        document.getElementById('sumCapValue').textContent = sumCap;
+        if (currentMode === 'quiz' && currentOperation === 'sum') {
+            quizScore = 0;
+            quizTotal = 0;
+            generateQuizQuestion();
+        }
+    });
 
     window.addEventListener('resize', () => requestAnimationFrame(renderPanel));
 });
