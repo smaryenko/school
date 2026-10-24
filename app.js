@@ -26,7 +26,7 @@ let currentShapeStyle = 'numberblocks'; // 'numicon' or 'numberblocks'
 let dragState = null;
 let quizScore = 0;
 let quizTotal = 0;
-let sumCap = 20; // max allowed answer for the sum quiz (slider: 10-30, step 5)
+let maxOperand = 10; // largest operand value for the sum quiz (slider: 1-20, step 1)
 
 // Colors used for the Numicon shapes (0-10)
 const NUMBER_COLORS = {
@@ -802,37 +802,29 @@ let quizAnswer = null;
 let quizAnswered = false;
 
 function generateQuizQuestion() {
-    // Operands include 0 so zero shows up in quizzes too. In sum mode they can
-    // reach the current sumCap (up to 40); subtract and compare stay within 0-20.
+    // Each operand is drawn uniformly and independently so every number in its
+    // range is equally likely to appear as a tile.
+    const randTo = (max) => Math.floor(Math.random() * (max + 1)); // 0..max
     let a, b;
     if (currentOperation === 'sum') {
-        // Pick uniformly among all (a, b) pairs with a + b <= sumCap.
-        // Sampling b from 0..(sumCap - a) after a uniform `a` would over-represent
-        // small values of b (e.g. 0 and 1 are valid for almost every a), so
-        // choose a flat index across every valid pair instead.
-        const pairs = [];
-        for (let x = 0; x <= sumCap; x++) {
-            for (let y = 0; y <= sumCap - x; y++) {
-                pairs.push([x, y]);
-            }
-        }
-        [a, b] = pairs[Math.floor(Math.random() * pairs.length)];
+        // Sum caps each operand at maxOperand (the slider value). Both operands
+        // are uniform over 0..maxOperand with no cross-operand constraint, so
+        // 0 and maxOperand are exactly as likely as any value between them.
+        // The sum then ranges 0..2*maxOperand and renders as a plain number
+        // when it exceeds 20.
+        a = randTo(maxOperand);
+        b = randTo(maxOperand);
     } else if (currentOperation === 'subtract') {
-        // Pick uniformly among all (a, b) pairs with 0 <= b <= a <= 20.
-        // Drawing two uniform numbers and swapping to a >= b would skew the
-        // minuend large and the difference small, so flat-index the valid
-        // pairs instead (same approach as the sum quiz).
-        const pairs = [];
-        for (let x = 0; x <= 20; x++) {
-            for (let y = 0; y <= x; y++) {
-                pairs.push([x, y]);
-            }
-        }
-        [a, b] = pairs[Math.floor(Math.random() * pairs.length)];
+        // Re-roll until b <= a so the difference is non-negative, without
+        // swapping (swapping would skew the minuend large).
+        do {
+            a = randTo(20);
+            b = randTo(20);
+        } while (b > a);
     } else {
-        // Compare: any two numbers 0-20.
-        a = Math.floor(Math.random() * 21);
-        b = Math.floor(Math.random() * 21);
+        // Compare: any two numbers 0-20, uniform and independent.
+        a = randTo(20);
+        b = randTo(20);
     }
     quizAnswered = false;
 
@@ -881,17 +873,33 @@ function generateQuizQuestion() {
         eq.textContent = '= ?';
         questionEl.appendChild(eq);
 
-        // Generate choices (correct + 3 wrong). Sum answers can reach the
-        // current cap; subtract answers always stay within 0-20.
-        const maxChoice = currentOperation === 'sum' ? sumCap : 20;
+        // Generate choices (correct + 3 wrong). Sum answers can reach twice the
+        // max operand; subtract answers always stay within 0-20.
+        const maxChoice = currentOperation === 'sum' ? maxOperand * 2 : 20;
         const choices = new Set([quizAnswer]);
+
+        // Prefer distractors close to the answer, but never clamp out-of-range
+        // values onto 0 or the cap -- that would pile duplicates onto the
+        // boundary and make 0 appear far more often than it should. Drop any
+        // candidate that falls outside [0, maxChoice] and try another offset.
         let guard = 0;
-        while (choices.size < 4 && guard < 100) {
+        while (choices.size < 4 && guard < 200) {
             guard++;
-            let wrong = quizAnswer + Math.floor(Math.random() * 7) - 3;
-            if (wrong < 0) wrong = 0;
-            if (wrong > maxChoice) wrong = maxChoice;
-            if (wrong !== quizAnswer) choices.add(wrong);
+            const offset = Math.floor(Math.random() * 7) - 3; // -3..+3
+            if (offset === 0) continue;
+            const wrong = quizAnswer + offset;
+            if (wrong < 0 || wrong > maxChoice) continue;
+            choices.add(wrong);
+        }
+
+        // Fallback: if the answer sits in a corner (e.g. 0 or the cap) and the
+        // nearby window couldn't supply enough distinct values, fill from the
+        // full valid range.
+        guard = 0;
+        while (choices.size < 4 && guard < 500) {
+            guard++;
+            const candidate = Math.floor(Math.random() * (maxChoice + 1));
+            choices.add(candidate);
         }
 
         const shuffled = [...choices].sort(() => Math.random() - 0.5);
@@ -1125,8 +1133,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const sumCapSlider = document.getElementById('sumCapSlider');
     sumCapSlider?.addEventListener('input', () => {
-        sumCap = parseInt(sumCapSlider.value, 10);
-        document.getElementById('sumCapValue').textContent = sumCap;
+        maxOperand = parseInt(sumCapSlider.value, 10);
+        document.getElementById('sumCapValue').textContent = maxOperand;
         if (currentMode === 'quiz' && currentOperation === 'sum') {
             quizScore = 0;
             quizTotal = 0;
