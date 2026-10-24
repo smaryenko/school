@@ -815,16 +815,17 @@ function generateQuizQuestion() {
         a = randTo(maxOperand);
         b = randTo(maxOperand);
     } else if (currentOperation === 'subtract') {
-        // Re-roll until b <= a so the difference is non-negative, without
-        // swapping (swapping would skew the minuend large).
+        // Operands uniform over 0..maxOperand. Re-roll until b <= a so the
+        // difference is non-negative, without swapping (swapping would skew
+        // the minuend large).
         do {
-            a = randTo(20);
-            b = randTo(20);
+            a = randTo(maxOperand);
+            b = randTo(maxOperand);
         } while (b > a);
     } else {
-        // Compare: any two numbers 0-20, uniform and independent.
-        a = randTo(20);
-        b = randTo(20);
+        // Compare: any two numbers 0..maxOperand, uniform and independent.
+        a = randTo(maxOperand);
+        b = randTo(maxOperand);
     }
     quizAnswered = false;
 
@@ -874,8 +875,8 @@ function generateQuizQuestion() {
         questionEl.appendChild(eq);
 
         // Generate choices (correct + 3 wrong). Sum answers can reach twice the
-        // max operand; subtract answers always stay within 0-20.
-        const maxChoice = currentOperation === 'sum' ? maxOperand * 2 : 20;
+        // max operand; subtract answers stay within 0..maxOperand.
+        const maxChoice = currentOperation === 'sum' ? maxOperand * 2 : maxOperand;
         const choices = new Set([quizAnswer]);
 
         // Prefer distractors close to the answer, but never clamp out-of-range
@@ -1018,12 +1019,12 @@ function updateQuizScore() {
 
 // ============ MODE SWITCHING ============
 
-// The max-sum slider only applies to the sum quiz, so show it only there.
+// The max-number slider caps operands in every quiz mode, so show it in any
+// quiz operation (but not in learn mode).
 function updateSumCapVisibility() {
     const control = document.getElementById('sumCapControl');
     if (!control) return;
-    const show = currentMode === 'quiz' && currentOperation === 'sum';
-    control.classList.toggle('hidden', !show);
+    control.classList.toggle('hidden', currentMode !== 'quiz');
 }
 
 function switchMode(mode) {
@@ -1135,7 +1136,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sumCapSlider?.addEventListener('input', () => {
         maxOperand = parseInt(sumCapSlider.value, 10);
         document.getElementById('sumCapValue').textContent = maxOperand;
-        if (currentMode === 'quiz' && currentOperation === 'sum') {
+        if (currentMode === 'quiz') {
             quizScore = 0;
             quizTotal = 0;
             generateQuizQuestion();
