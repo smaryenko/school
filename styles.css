@@ -291,7 +291,7 @@ body {
 
 .learn-drop-zone {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: center;
     align-content: center;
     gap: 1.5rem;
@@ -301,13 +301,8 @@ body {
     border-radius: 16px;
     padding: 2rem;
     transition: background 0.2s;
-    flex-wrap: wrap;
-}
-
-.learn-drop-zone .learn-shape {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    /* Shapes are scaled in JS to fit on one row, so never wrap. */
+    flex-wrap: nowrap;
 }
 
 .learn-drop-zone:empty {
@@ -337,47 +332,91 @@ body {
     opacity: 1;
 }
 
-.learn-shape {
+/* ===== Shared shape-row items (used by BOTH learn and quiz via
+   renderShapeRow). One structure, one set of styles for both modes. ===== */
+
+/* A single operand: a shape box with the number label beneath it. */
+.shape-item {
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-end;
-    gap: 4px;
+    gap: 6px;
 }
 
-.learn-shape-number {
-    font-size: 1.2rem;
+/* Shared-height box (height set in JS) that vertically centers the shape, so
+   all shapes align and their labels share one baseline. */
+.shape-item-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shape-item-box svg {
+    width: auto;
+    height: auto;
+}
+
+/* A bare number (operand > 20, no shape). */
+.shape-item-box-number {
     font-weight: 700;
-    color: var(--text-muted);
+    color: var(--text-strong);
 }
 
-.learn-shape .delete-btn {
+/* The number label under each shape (font-size set in JS to track the scale). */
+.shape-item-number {
+    font-weight: 700;
+    color: var(--text-strong);
+    line-height: 1;
+}
+
+/* Operator wrapper mirrors .shape-item (glyph box + label-height spacer) so it
+   aligns to the shapes' centers under align-items:center. */
+.shape-item-op-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* The operator glyph (+, -, =, ?, "= ?"); height set in JS to the box height so
+   it centers on the shape band. */
+.shape-item-operator {
+    color: var(--text-muted);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+
+/* Shrink-wraps the actual shape so the delete button can anchor to the real
+   shape corner (not the taller shared box). */
+.shape-item-shape {
+    position: relative;
+    display: inline-flex;
+    line-height: 0;
+}
+
+.shape-item-shape .delete-btn {
     position: absolute;
-    top: -8px;
-    right: -8px;
-    width: 22px;
-    height: 22px;
+    /* Center the button on the shape's top-right corner point (half the 18px
+       button sits outside on each axis) so it clears the shape content even
+       for a narrow 1-wide column. */
+    top: -9px;
+    right: -9px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: #e53e3e;
     color: white;
     border: none;
-    font-size: 13px;
-    line-height: 22px;
+    font-size: 11px;
+    line-height: 18px;
     text-align: center;
     cursor: pointer;
     z-index: 10;
-}
-
-.learn-shape:hover .delete-btn {
-    opacity: 1;
-}
-
-.plus-sign {
-    font-size: 2.5rem;
-    color: var(--text-heading);
-    font-weight: 700;
-    align-self: center;
 }
 
 .sum-text {
@@ -389,7 +428,9 @@ body {
     align-items: center;
 }
 
-/* Quiz Mode */
+/* Quiz Mode -- same container structure as learn: a drop-zone area on top
+   (the question, rendered by the shared renderShapeRow) and the answers +
+   Next button below (in place of learn's sum result). */
 .quiz-mode {
     position: absolute;
     inset: 0;
@@ -397,12 +438,24 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 1.5rem;
-    padding: 2rem;
+    padding: 1rem;
+    gap: 1rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Reserve the scrollbar gutter so the centered content doesn't shift left
+       when a scrollbar appears after an answer reveals feedback/Next. */
+    scrollbar-gutter: stable;
 }
 
 .quiz-mode.hidden {
     display: none;
+}
+
+/* Shares the learn drop-zone layout/sizing, but no dashed border since the
+   quiz question isn't a drop target. Extra specificity to beat the
+   .learn-drop-zone:not(:empty) border-color rule. */
+.quiz-drop-zone.quiz-drop-zone {
+    border-color: transparent;
 }
 
 .quiz-bottom {
@@ -410,75 +463,29 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 1rem;
-    min-height: 120px;
-}
-
-.quiz-question {
-    display: flex;
-    align-items: flex-end;
-    gap: 1rem;
-    margin-bottom: 3.5rem;
-}
-
-.quiz-question .quiz-operator {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--text-muted);
-    /* Stretch to the full row height and center the symbol vertically, but
-       offset upward by the shape's number-label area (label height + gap) so
-       the operator lines up with the middle of the shapes, not the labels. */
-    align-self: stretch;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding-bottom: calc(1.2rem + 6px);
-}
-
-.quiz-shape-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    width: 120px;
-}
-
-.quiz-shape-wrapper svg {
-    max-width: 100%;
-    max-height: 150px;
-    width: auto;
-    height: auto;
-}
-
-.quiz-shape-number {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: var(--text-muted);
-    line-height: 1;
-}
-
-/* Operand tile with no shape (value > 20): center a big number instead. */
-.quiz-shape-wrapper-number {
-    justify-content: center;
-    min-height: 150px;
-}
-
-.quiz-shape-wrapper-number .quiz-shape-number {
-    font-size: 3rem;
-    color: var(--text-strong);
+    /* Reserve the full height for feedback + Next button + score so the layout
+       never grows when they appear after an answer (which would push the
+       question/choices up). Each child also reserves its own space:
+       .quiz-feedback has a fixed height, .quiz-next uses visibility:hidden,
+       and .quiz-score has a min-height. */
+    min-height: 130px;
+    justify-content: flex-start;
 }
 
 .quiz-choices {
     display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
+    gap: 0.75rem;
+    /* Always one row. */
+    flex-wrap: nowrap;
     justify-content: center;
-    align-items: flex-end;
+    align-items: stretch;
+    width: 100%;
+    max-width: 560px;
 }
 
 .quiz-choice {
     cursor: pointer;
-    padding: 0.75rem;
+    padding: 0.5rem;
     border: 3px solid transparent;
     border-radius: 12px;
     transition: border-color 0.2s, transform 0.15s, background 0.2s;
@@ -489,8 +496,12 @@ body {
     gap: 4px;
     background: var(--bg-surface);
     box-shadow: 0 2px 8px var(--shadow-soft);
-    width: 120px;
-    height: 150px;
+    /* Share the row width equally so all cards stay on one line at any width,
+       with a sensible height and an upper width bound on wide screens. */
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 130px;
+    height: 130px;
     box-sizing: border-box;
     overflow: hidden;
 }
@@ -525,7 +536,7 @@ body {
 
 /* Answer choice with no shape (value > 20): show a big centered number. */
 .quiz-choice-number .choice-label {
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     color: var(--text-strong);
 }
 
@@ -537,7 +548,7 @@ body {
 }
 
 .choice-sign-label {
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     font-weight: 800;
     color: var(--text-strong);
 }
@@ -582,6 +593,9 @@ body {
     font-size: 1rem;
     color: var(--text-faint);
     font-weight: 500;
+    /* Reserve a line so the layout doesn't shift when the score first appears
+       after the initial answer. */
+    min-height: 1.2rem;
 }
 
 /* Right Panel */
@@ -670,7 +684,7 @@ body {
 
     .panel {
         width: 100%;
-        height: 40%;
+        height: 45%;
         border-left: none;
         border-bottom: 1px solid var(--border);
         overflow: hidden;
@@ -714,28 +728,35 @@ body {
         gap: 0.75rem;
     }
 
-    .quiz-question {
-        margin-bottom: 1.5rem;
-        gap: 0.5rem;
+    /* In quiz mode the shapes palette isn't used (no dragging), so hide it and
+       give the quiz the full height. This is the main fix for shapes getting
+       clipped on short mobile screens. */
+    body.mode-quiz .panel {
+        display: none;
     }
 
-    .quiz-shape-wrapper {
-        width: 70px;
-        height: 130px;
+    /* In learn mode on mobile, put the drag area on top and the shapes palette
+       at the bottom (reachable by thumb). The palette is first in the DOM, so
+       reorder with flexbox and move its divider border to the top edge. */
+    body.mode-learn .workspace {
+        order: 0;
     }
 
-    .quiz-shape-wrapper svg {
-        max-width: 60px;
-        max-height: 100px;
+    body.mode-learn .panel {
+        order: 1;
+        border-bottom: none;
+        border-top: 1px solid var(--border);
     }
 
-    .quiz-question .quiz-operator {
-        font-size: 1.4rem;
+    .quiz-mode {
+        /* Inherits justify-content: flex-start from the base rule: the
+           flex:1 question fills the top and centers its shapes, so the
+           choices/bottom stay pinned beneath it. */
+        gap: 1rem;
+        padding: 1rem;
     }
 
     .quiz-choice {
-        width: 80px;
-        height: 110px;
         padding: 0.5rem;
     }
 
@@ -755,41 +776,14 @@ body {
     .workspace-hint {
         font-size: 1rem;
     }
-
-    .plus-sign {
-        font-size: 1.8rem;
-    }
 }
 
 @media (max-width: 480px) {
     .panel {
-        height: 40%;
+        height: 45%;
     }
 
     .panel-shapes {
         grid-template-columns: repeat(5, 1fr);
-    }
-
-    .quiz-shape-wrapper {
-        width: 55px;
-        height: 110px;
-    }
-
-    .quiz-shape-wrapper svg {
-        max-width: 50px;
-        max-height: 90px;
-    }
-
-    .quiz-choice {
-        width: 65px;
-        height: 90px;
-    }
-
-    .quiz-choice .choice-label {
-        font-size: 0.9rem;
-    }
-
-    .choice-sign-label {
-        font-size: 1.8rem;
     }
 }

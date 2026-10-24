@@ -27,6 +27,7 @@ let dragState = null;
 let quizScore = 0;
 let quizTotal = 0;
 let maxOperand = 10; // largest operand value for the sum quiz (slider: 1-20, step 1)
+const SUM_DISPLAY_MAX_H = 120; // bounded height of the learn-mode result shape
 
 // Colors used for the Numicon shapes (0-10)
 const NUMBER_COLORS = {
@@ -642,6 +643,157 @@ function removeLearnShape(index) {
     renderLearnMode();
 }
 
+// Shared renderer for both learn and quiz: lays out a row of numbered shapes
+// with operators between them inside `dropZone`, scaled to fit the zone. Both
+// modes use the identical drop-zone container and this identical scaling, so
+// the question/expression looks and behaves the same in each.
+//
+// items: [{ num, op }] where `op` is the operator string shown AFTER the shape
+//        (null for the last item). num > 20 renders as a bare number.
+// opts:  { reservedBelow, onDelete }
+//        reservedBelow - px height taken by content below the zone (sum result
+//                        in learn, choices+bottom in quiz) so shapes fit above.
+//        onDelete      - if given, each shape gets a delete button calling it
+//                        with the item's index (learn mode only).
+function renderShapeRow(dropZone, items, opts = {}) {
+    const { reservedBelow = 0, onDelete = null } = opts;
+
+    // Clear everything except a .workspace-hint child, if present.
+    Array.from(dropZone.children).forEach(child => {
+        if (!child.classList || !child.classList.contains('workspace-hint')) {
+            child.remove();
+        }
+    });
+
+    // Measure the real intrinsic sizes so we can scale to fit exactly.
+    items.forEach(it => {
+        if (it.num <= 20) {
+            it.svg = createShapeForNumber(it.num);
+            it.w = parseInt(it.svg.getAttribute('width')) || 1;
+            it.h = parseInt(it.svg.getAttribute('height')) || 1;
+        } else {
+            it.svg = null;        // bare number tile
+            it.w = 120;           // nominal width for a number tile
+            it.h = 120;
+        }
+    });
+
+    const ZONE_PADDING = 70;         // zone padding + border (both sides)
+    const TOP_SPACE = 16;            // delete button / breathing room at top
+    const LABEL_H = 1.6 * 16 + 8;    // number label height at scale = 1
+
+    const maxShapeH = items.reduce((max, e) => Math.max(max, e.h), 1);
+
+    // (Re)build every row element at a given scale. Returns nothing; callers
+    // measure the result and may rebuild at a corrected scale.
+    function buildAtScale(scale) {
+        Array.from(dropZone.children).forEach(child => {
+            if (!child.classList || !child.classList.contains('workspace-hint')) {
+                child.remove();
+            }
+        });
+        // Shared box height = tallest scaled shape, so all shapes center on one
+        // band and their labels line up; operators center on the same band.
+        const boxHeight = Math.round(maxShapeH * scale);
+
+        items.forEach((it) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'shape-item';
+
+            const box = document.createElement('div');
+            box.className = 'shape-item-box';
+            box.style.height = `${boxHeight}px`;
+
+            // Inner element that shrink-wraps the actual shape; it is the
+            // positioning context for the delete button so the button anchors
+            // to the real shape corner, not the taller shared box.
+            const shapeInner = document.createElement('span');
+            shapeInner.className = 'shape-item-shape';
+
+            if (it.svg) {
+                it.svg.setAttribute('width', Math.round(it.w * scale));
+                it.svg.setAttribute('height', Math.round(it.h * scale));
+                shapeInner.appendChild(it.svg);
+            } else {
+                box.classList.add('shape-item-box-number');
+                box.style.fontSize = `${(3 * scale).toFixed(2)}rem`;
+                shapeInner.textContent = it.num;
+            }
+
+            if (onDelete) {
+                const del = document.createElement('button');
+                del.className = 'delete-btn';
+                del.textContent = '×';
+                del.addEventListener('click', () => onDelete(it.idx));
+                shapeInner.appendChild(del);
+            }
+
+            box.appendChild(shapeInner);
+            wrapper.appendChild(box);
+
+            const label = document.createElement('span');
+            label.className = 'shape-item-number';
+            label.textContent = it.num;
+            label.style.fontSize = `${(1.6 * scale).toFixed(2)}rem`;
+            wrapper.appendChild(label);
+
+            dropZone.appendChild(wrapper);
+
+            if (it.op != null) {
+                // The operator mirrors the shape-item column (glyph box +
+                // label-height spacer) so it centers on the shape band.
+                const opWrap = document.createElement('div');
+                opWrap.className = 'shape-item-op-wrap';
+
+                const glyph = document.createElement('span');
+                glyph.className = 'shape-item-operator';
+                glyph.style.fontSize = `${(2 * scale).toFixed(2)}rem`;
+                glyph.style.height = `${boxHeight}px`;
+                glyph.textContent = it.op;
+                opWrap.appendChild(glyph);
+
+                const spacer = document.createElement('span');
+                spacer.className = 'shape-item-number';
+                spacer.style.fontSize = `${(1.6 * scale).toFixed(2)}rem`;
+                spacer.textContent = '\u00A0';
+                spacer.setAttribute('aria-hidden', 'true');
+                opWrap.appendChild(spacer);
+
+                dropZone.appendChild(opWrap);
+            }
+        });
+    }
+
+    // First pass: an estimate to get close, then measure the ACTUAL rendered
+    // row and correct the scale exactly so nothing overflows the zone. This
+    // avoids relying on hand-tuned operator-width guesses.
+    const areaRect = dropZone.getBoundingClientRect();
+    const availW = areaRect.width - ZONE_PADDING;
+    const availH = areaRect.height - ZONE_PADDING - TOP_SPACE - reservedBelow;
+    if (availW <= 0 || availH <= 0) { buildAtScale(1); return 1; }
+
+    // Start from the height-based estimate (height has no wrapping surprises).
+    let scale = Math.min(availH / (maxShapeH + LABEL_H), 2.5);
+    scale = Math.max(scale, 0.1);
+    buildAtScale(scale);
+
+    // Correct for width: measure the actual rendered row (sum of child widths
+    // plus the flex gaps) and shrink proportionally if it exceeds the zone's
+    // inner width. More reliable than scrollWidth for a centered flex row.
+    const ROW_GAP = 24; // 1.5rem flex gap
+    const kids = Array.from(dropZone.children).filter(c =>
+        !c.classList || !c.classList.contains('workspace-hint'));
+    const contentW = kids.reduce((sum, c) => sum + c.offsetWidth, 0)
+        + Math.max(0, kids.length - 1) * ROW_GAP;
+    const innerW = dropZone.clientWidth - (ZONE_PADDING - 6); // minus padding
+    if (contentW > innerW && innerW > 0) {
+        scale = Math.max(0.1, scale * (innerW / contentW) * 0.98); // small margin
+        buildAtScale(scale);
+    }
+
+    return scale;
+}
+
 function renderLearnMode() {
     const dropZone = document.getElementById('learnDropZone');
     const sumDisplay = document.getElementById('sumDisplay');
@@ -670,24 +822,6 @@ function renderLearnMode() {
 
     hint.classList.add('hidden');
 
-    // Calculate scale to fit shapes inside drop zone
-    const zoneRect = dropZone.getBoundingClientRect();
-    const maxShapeW = 152; // widest composite shape
-    const maxShapeH = 176; // tallest shape (10)
-    const numShapes = learnShapes.length;
-    const gapSpace = numShapes > 1 ? 80 : 0; // space for + sign and gaps
-
-    const availW = zoneRect.width - 64; // padding
-    const availH = zoneRect.height - 64;
-
-    let learnScale = 1;
-    if (availW > 0 && availH > 0) {
-        const scaleByW = (availW - gapSpace) / (numShapes * maxShapeW);
-        const scaleByH = availH / maxShapeH;
-        learnScale = Math.min(scaleByW, scaleByH, 1.5);
-        learnScale = Math.max(learnScale, 0.3);
-    }
-
     // Build display items that remember their original index so removal
     // stays correct even when we reorder for subtraction.
     let displayItems = learnShapes.map((num, idx) => ({ num, idx }));
@@ -697,49 +831,40 @@ function renderLearnMode() {
         displayItems.sort((a, b) => b.num - a.num);
     }
 
-    // Render dropped shapes with operator between them
-    displayItems.forEach((entry, i) => {
-        const num = entry.num;
-        const shapeWrapper = document.createElement('div');
-        shapeWrapper.className = 'learn-shape';
-
-        const svg = createShapeForNumber(num);
-        const origW = parseInt(svg.getAttribute('width'));
-        const origH = parseInt(svg.getAttribute('height'));
-        svg.setAttribute('width', Math.round(origW * learnScale));
-        svg.setAttribute('height', Math.round(origH * learnScale));
-        shapeWrapper.appendChild(svg);
-
-        const numLabel = document.createElement('span');
-        numLabel.className = 'learn-shape-number';
-        numLabel.textContent = num;
-        shapeWrapper.appendChild(numLabel);
-
-        const del = document.createElement('button');
-        del.className = 'delete-btn';
-        del.textContent = '×';
-        del.addEventListener('click', () => removeLearnShape(entry.idx));
-        shapeWrapper.appendChild(del);
-
-        dropZone.appendChild(shapeWrapper);
-
-        if (i < displayItems.length - 1) {
-            const op = document.createElement('span');
-            op.className = 'plus-sign';
-            if (currentOperation === 'sum') {
-                op.textContent = '+';
-            } else if (currentOperation === 'subtract') {
-                op.textContent = '−';
-            } else if (displayItems.length === 2) {
-                const a = displayItems[0].num;
-                const b = displayItems[1].num;
-                op.textContent = a > b ? '>' : a < b ? '<' : '=';
-            } else {
-                op.textContent = '?';
-            }
-            dropZone.appendChild(op);
-        }
+    // Attach the operator shown after each shape (none after the last).
+    displayItems.forEach((it, i) => {
+        if (i === displayItems.length - 1) { it.op = null; return; }
+        if (currentOperation === 'sum') it.op = '+';
+        else if (currentOperation === 'subtract') it.op = '−';
+        else if (displayItems.length === 2) {
+            const d = displayItems[0].num - displayItems[1].num;
+            it.op = d > 0 ? '>' : d < 0 ? '<' : '=';
+        } else it.op = '?';
     });
+
+    // Reserve the (bounded) sum-display height below the zone when a result
+    // shows, then render the shape row with the shared renderer.
+    const reservedBelow = learnShapes.length === 2 ? SUM_DISPLAY_MAX_H + 24 : 0;
+    renderShapeRow(dropZone, displayItems, {
+        reservedBelow,
+        onDelete: removeLearnShape,
+    });
+
+    // Builds the result shape for the sum-display, capped to a bounded height
+    // so the sum-display never grows unpredictably and pushes the drop zone
+    // (and its shapes) into overflow.
+    const makeResultShape = (n) => {
+        const shapeContainer = document.createElement('span');
+        shapeContainer.className = 'sum-shape';
+        const resultSvg = createShapeForNumber(n);
+        const origW = parseInt(resultSvg.getAttribute('width')) || 1;
+        const origH = parseInt(resultSvg.getAttribute('height')) || 1;
+        const cap = Math.min(1, SUM_DISPLAY_MAX_H / origH);
+        resultSvg.setAttribute('width', Math.round(origW * cap));
+        resultSvg.setAttribute('height', Math.round(origH * cap));
+        shapeContainer.appendChild(resultSvg);
+        return shapeContainer;
+    };
 
     // Show result if 2 shapes
     if (learnShapes.length === 2) {
@@ -754,15 +879,7 @@ function renderLearnMode() {
             sumDisplay.appendChild(text);
 
             if (total <= 20) {
-                const shapeContainer = document.createElement('span');
-                shapeContainer.className = 'sum-shape';
-                const resultSvg = createShapeForNumber(total);
-                const origW = parseInt(resultSvg.getAttribute('width'));
-                const origH = parseInt(resultSvg.getAttribute('height'));
-                resultSvg.setAttribute('width', Math.round(origW * 1.0));
-                resultSvg.setAttribute('height', Math.round(origH * 1.0));
-                shapeContainer.appendChild(resultSvg);
-                sumDisplay.appendChild(shapeContainer);
+                sumDisplay.appendChild(makeResultShape(total));
             }
         } else if (currentOperation === 'subtract') {
             // Always subtract the smaller number from the larger one so the
@@ -775,11 +892,7 @@ function renderLearnMode() {
             text.textContent = `${big} − ${small} = ${diff}`;
             sumDisplay.appendChild(text);
 
-            const shapeContainer = document.createElement('span');
-            shapeContainer.className = 'sum-shape';
-            const resultSvg = createShapeForNumber(diff);
-            shapeContainer.appendChild(resultSvg);
-            sumDisplay.appendChild(shapeContainer);
+            sumDisplay.appendChild(makeResultShape(diff));
         } else {
             // Compare mode
             const a = learnShapes[0];
@@ -838,41 +951,17 @@ function generateQuizQuestion() {
     feedbackEl.className = 'quiz-feedback';
     nextBtn.classList.remove('visible');
 
-    questionEl.innerHTML = '';
-
-    // Build an operand tile: a shape (only for 0-20) plus its number label.
-    // Values above 20 have no shape, so show the number on its own.
-    const makeOperand = (n) => {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'quiz-shape-wrapper';
-        if (n <= 20) {
-            wrapper.appendChild(createShapeForNumber(n));
-        } else {
-            wrapper.classList.add('quiz-shape-wrapper-number');
-        }
-        const label = document.createElement('span');
-        label.className = 'quiz-shape-number';
-        label.textContent = n;
-        wrapper.appendChild(label);
-        return wrapper;
-    };
-
-    questionEl.appendChild(makeOperand(a));
+    // Render the question expression into the same drop-zone/renderer as learn.
+    // The first operand carries the arithmetic operator; the second carries the
+    // trailing "= ?" (or the compare "?" goes on the first operand).
+    const opSymbol = currentOperation === 'sum' ? '+' : '−';
+    const questionItems = currentOperation === 'compare'
+        ? [{ num: a, op: '?' }, { num: b, op: null }]
+        : [{ num: a, op: opSymbol }, { num: b, op: '= ?' }];
+    renderShapeRow(questionEl, questionItems);
 
     if (currentOperation === 'sum' || currentOperation === 'subtract') {
         quizAnswer = currentOperation === 'sum' ? a + b : a - b;
-
-        const op = document.createElement('span');
-        op.className = 'quiz-operator';
-        op.textContent = currentOperation === 'sum' ? '+' : '−';
-        questionEl.appendChild(op);
-
-        questionEl.appendChild(makeOperand(b));
-
-        const eq = document.createElement('span');
-        eq.className = 'quiz-operator';
-        eq.textContent = '= ?';
-        questionEl.appendChild(eq);
 
         // Generate choices (correct + 3 wrong). Sum answers can reach twice the
         // max operand; subtract answers stay within 0..maxOperand.
@@ -914,13 +1003,9 @@ function generateQuizQuestion() {
             // Shapes only exist for 0-20; above that, show the number alone.
             if (num <= 20) {
                 const svg = createShapeForNumber(num);
-                // Let CSS size the shape to fit the card (viewBox preserves aspect
-                // ratio); keep the intrinsic width/height as the cap so narrow
-                // shapes aren't blown up past their natural size.
-                const origW = parseInt(svg.getAttribute('width'));
-                const origH = parseInt(svg.getAttribute('height'));
-                svg.style.maxWidth = `${origW}px`;
-                svg.style.maxHeight = `${origH}px`;
+                // Let CSS size the shape to fill the card (viewBox preserves
+                // aspect ratio). Drop the intrinsic width/height so the shape
+                // scales up to use the available card space.
                 svg.removeAttribute('width');
                 svg.removeAttribute('height');
                 choice.appendChild(svg);
@@ -937,15 +1022,9 @@ function generateQuizQuestion() {
             choicesEl.appendChild(choice);
         });
     } else {
-        // Compare mode quiz: pick the correct sign
+        // Compare mode quiz: pick the correct sign. The question row is already
+        // rendered above (with "?" between the operands).
         quizAnswer = a > b ? '>' : a < b ? '<' : '=';
-
-        const op = document.createElement('span');
-        op.className = 'quiz-operator';
-        op.textContent = '?';
-        questionEl.appendChild(op);
-
-        questionEl.appendChild(makeOperand(b));
 
         const signs = ['<', '=', '>'];
         choicesEl.innerHTML = '';
@@ -998,7 +1077,7 @@ function handleQuizAnswer(selected, choiceEl) {
 
     // In compare mode, replace the ? with the correct sign
     if (currentOperation === 'compare') {
-        const operators = document.querySelectorAll('#quizQuestion .quiz-operator');
+        const operators = document.querySelectorAll('#quizQuestion .shape-item-operator');
         operators.forEach(op => {
             if (op.textContent === '?') {
                 op.textContent = quizAnswer;
@@ -1036,10 +1115,17 @@ function switchMode(mode) {
     document.getElementById('learnMode').classList.toggle('hidden', mode !== 'learn');
     document.getElementById('quizMode').classList.toggle('hidden', mode !== 'quiz');
     document.getElementById('operationToggle').classList.toggle('hidden', false);
+    // Expose the active mode on the body so CSS can adapt the layout
+    // (e.g. hide the shapes palette in quiz mode on mobile, where it isn't
+    // used and would otherwise squeeze the quiz off-screen).
+    document.body.classList.toggle('mode-quiz', mode === 'quiz');
+    document.body.classList.toggle('mode-learn', mode === 'learn');
     updateSumCapVisibility();
 
     if (mode === 'quiz') {
-        generateQuizQuestion();
+        // Defer so the quiz area has real dimensions (it was display:none until
+        // the class toggle above) before renderShapeRow measures it.
+        requestAnimationFrame(generateQuizQuestion);
     }
 }
 
@@ -1120,6 +1206,10 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLearnMode();
     });
 
+    // Reflect the initial mode on the body for layout-dependent CSS.
+    document.body.classList.toggle('mode-quiz', currentMode === 'quiz');
+    document.body.classList.toggle('mode-learn', currentMode === 'learn');
+
     applyTheme(resolveTheme());
     document.getElementById('themeBtn')?.addEventListener('click', toggleTheme);
 
@@ -1143,5 +1233,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    window.addEventListener('resize', () => requestAnimationFrame(renderPanel));
+    window.addEventListener('resize', () => requestAnimationFrame(() => {
+        renderPanel();
+        // Re-fit learn-mode shapes to the resized drop zone.
+        if (currentMode === 'learn') renderLearnMode();
+        // Re-fit quiz shapes/cards to the resized area. Only re-render before
+        // the user has answered, so we don't disrupt feedback on screen.
+        if (currentMode === 'quiz' && !quizAnswered) generateQuizQuestion();
+    }));
 });
