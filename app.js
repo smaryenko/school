@@ -1628,9 +1628,34 @@ function buildPlacedColorLookup(value, style, rot, flip, placedNorm) {
             headPlacedCell
         };
     }
-    // Numicon: single color for the whole piece (matches createShapeSVG).
-    const color = NUMBER_COLORS[value] || '#888';
-    return { fill: () => color, border: () => ({ color: DEFAULT_BORDER, width: 1.5 }), headPlacedCell: null };
+    // Numicon: single color for 1-10; composite teens (11-20) are a grey ten
+    // (indices 0-9) plus the remainder's color (indices 10+), matching
+    // cellsForNumber's order (ten cells pushed first, then remainder).
+    const numiconColors = numiconCellColors(value);
+    return {
+        fill: (p) => {
+            const di = placedKeyToDefaultIdx.get(cellKey(p));
+            return numiconColors[di] || numiconColors[0] || '#888';
+        },
+        border: () => ({ color: DEFAULT_BORDER, width: 1.5 }),
+        headPlacedCell: null
+    };
+}
+
+// Per-cell colors for a Numicon number, in cellsForNumber() default index
+// order. 1-10: all the number's own color. 11-20: first 10 cells are the ten
+// (grey), the remaining cells are the remainder number's color.
+function numiconCellColors(value) {
+    if (value <= 10) {
+        const c = NUMBER_COLORS[value] || '#888';
+        return Array.from({ length: value }, () => c);
+    }
+    const remainder = value - 10;
+    const tenColor = NUMBER_COLORS[10] || '#b8b8b8';
+    const remColor = NUMBER_COLORS[remainder] || '#888';
+    const out = Array.from({ length: 10 }, () => tenColor);
+    for (let i = 0; i < remainder; i++) out.push(remColor);
+    return out;
 }
 
 // Build an SVG that traces the outer (and any inner) perimeter of a cell set
