@@ -13,6 +13,7 @@
             <div class="mode-toggle">
                 <button id="learnBtn" class="toggle-btn active">Learn</button>
                 <button id="quizBtn" class="toggle-btn">Quiz</button>
+                <button id="buildBtn" class="toggle-btn">Build</button>
             </div>
             <div class="operation-toggle" id="operationToggle">
                 <button id="sumBtn" class="toggle-btn active">Sum</button>
@@ -34,8 +35,8 @@
             </button>
         </div>
         <div class="main-content">
-            <aside class="panel" aria-label="Numicon shapes palette">
-                <h2>Shapes</h2>
+            <aside class="panel" aria-label="Numbers palette">
+                <h2>Numbers</h2>
                 <div class="panel-shapes" id="panelShapes"></div>
             </aside>
             <main class="workspace" id="workspace" aria-label="Working area">
@@ -47,6 +48,19 @@
                         </div>
                     </div>
                     <div class="sum-display" id="sumDisplay"></div>
+                </div>
+
+                <!-- Build mode -->
+                <div class="build-mode hidden" id="buildMode">
+                    <div class="build-prompt" id="buildPrompt"></div>
+                    <!-- Reuses the learn drop-zone look; the target outline and
+                         placed pieces are rendered inside by the build engine. -->
+                    <div class="learn-drop-zone build-stage" id="buildStage"></div>
+                    <div class="quiz-choices build-tray" id="buildTray" aria-label="Pieces to choose from"></div>
+                    <div class="build-bottom">
+                        <div class="build-feedback" id="buildFeedback"></div>
+                        <button class="quiz-next build-next" id="buildNext">Skip</button>
+                    </div>
                 </div>
 
                 <!-- Quiz mode -->

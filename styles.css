@@ -598,6 +598,172 @@ body {
     min-height: 1.2rem;
 }
 
+/* ===== Build Mode ===== */
+.build-mode {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    gap: 1rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+}
+
+.build-mode.hidden {
+    display: none;
+}
+
+.build-prompt {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text-strong);
+    text-align: center;
+    min-height: 1.6rem;
+}
+
+/* The stage reuses the learn drop-zone frame. The target outline and placed
+   pieces are absolutely positioned inside a sized inner canvas. */
+.build-stage.build-stage {
+    position: relative;
+    flex: 1;
+    width: 90%;
+    max-width: 640px;
+    border-color: var(--border-strong);
+    overflow: visible;
+}
+
+/* Inner canvas sized to the target outline's pixel footprint; pieces are
+   positioned relative to this so snap coordinates line up with the outline. */
+.build-canvas {
+    position: relative;
+}
+
+/* Faint fill cells behind the pieces so the empty target reads as a slot.
+   These sit UNDER the pieces; the always-visible border is the perimeter SVG
+   below. */
+.build-outline-cell {
+    position: absolute;
+    background: rgba(128, 128, 128, 0.10);
+    transition: background 0.3s;
+}
+
+/* The single perimeter outline traced around the silhouette. Layered ABOVE
+   the pieces (appended last / pieces inserted before it) so the target border
+   is always visible. Never intercepts pointer events. */
+.build-outline-perimeter {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.build-outline-perimeter line {
+    stroke: var(--border-strong);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 7 5;
+    transition: stroke 0.3s;
+}
+
+/* Faint internal cell dividers so a multi-cell outline reads as its grid
+   (e.g. a 2x5 ten doesn't look like one tall blob). Thinner and lighter than
+   the perimeter. */
+.build-outline-perimeter line.build-outline-divider {
+    stroke: var(--border);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+    opacity: 0.8;
+}
+
+/* When solved, the perimeter (and faint fill) turn green. */
+.build-stage.solved .build-outline-perimeter line {
+    stroke: #38a169;
+    stroke-width: 4;
+    stroke-dasharray: none;
+}
+
+/* Keep solved dividers subtle (thin) rather than bold green. */
+.build-stage.solved .build-outline-perimeter line.build-outline-divider {
+    stroke: #38a169;
+    stroke-width: 1.5;
+    opacity: 0.5;
+}
+
+.build-stage.solved .build-outline-cell {
+    background: rgba(56, 161, 105, 0.22);
+}
+
+/* A piece placed on the stage (snapped to grid). */
+.build-placed {
+    position: absolute;
+    cursor: grab;
+    line-height: 0;
+    touch-action: none;
+}
+
+.build-placed:active {
+    cursor: grabbing;
+}
+
+/* A misfit piece (overhangs the outline or overlaps another) reads as wrong
+   simply by not fitting the outline -- no extra red frame around it. */
+
+/* The expected number, shown as a small numeral inside the stage just below
+   the outline. Positioned in JS; never intercepts drag pointer events. */
+.build-target-number {
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text-faint);
+    text-align: center;
+    pointer-events: none;
+}
+
+/* The tray reuses the quiz choice classes (.quiz-choices / .quiz-choice) for
+   identical sizing and mobile scaling. These rules only add the drag
+   affordance and the used/dimmed state on top of the quiz card look. */
+.build-piece {
+    cursor: grab;
+    touch-action: none;
+}
+
+.build-piece:active {
+    cursor: grabbing;
+}
+
+/* A tray piece that has been used (placed on the stage) is dimmed. */
+.build-piece.used {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+.build-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 80px;
+    justify-content: flex-start;
+}
+
+.build-feedback {
+    font-size: 1.3rem;
+    font-weight: 700;
+    height: 2rem;
+    color: #38a169;
+}
+
+/* Build uses the quiz-next button styling but is always visible (acts as
+   Skip before solving, Next after). */
+.build-next.build-next {
+    visibility: visible;
+}
+
 /* Right Panel */
 .panel {
     width: 33%;
@@ -731,7 +897,8 @@ body {
     /* In quiz mode the shapes palette isn't used (no dragging), so hide it and
        give the quiz the full height. This is the main fix for shapes getting
        clipped on short mobile screens. */
-    body.mode-quiz .panel {
+    body.mode-quiz .panel,
+    body.mode-build .panel {
         display: none;
     }
 

@@ -1096,6 +1096,1006 @@ function updateQuizScore() {
     }
 }
 
+// ============ BUILD MODE ============
+//
+// A construction puzzle: show the native outline of a target number N, and
+// offer 4 pieces of which exactly 2 combine to fill that outline. The child
+// drags pieces onto the stage; dropped pieces snap to the grid so a wrong
+// piece visibly overhangs the outline or overlaps the other piece. When the
+// two placed pieces exactly cover the outline, it turns green and a Next
+// button starts a fresh round. No scoring.
+//
+// The tiling math runs on abstract grid cells so it is style-agnostic; only
+// the per-cell geometry (cellsForNumber) and the painter differ per style.
+// Geometry verified headlessly against the agreed examples before wiring UI.
+
+const BUILD_CELL_DEFAULT = 40; // fallback px size of one grid cell
+const BUILD_CELL_MAX = 72;     // never make cells larger than this
+const BUILD_CELL_MIN = 20;     // never shrink below this
+
+// The current cell size in px (set per round from the measured stage).
+function currentBuildCell() {
+    return (buildRound && buildRound.cell) || BUILD_CELL_DEFAULT;
+}
+
+// Compute the largest cell size that fits a cols x rows outline inside the
+// stage, leaving a margin so misfit pieces can overhang visibly, and clamped
+// to sane bounds. Measures the live stage; if it has no size yet, falls back.
+function computeBuildCell(stage, cols, rows) {
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return BUILD_CELL_DEFAULT;
+    // Leave room: ~2 cells of margin all around for overhang + the dashed
+    // stage padding.
+    const availW = rect.width - 90;
+    const availH = rect.height - 90;
+    const byW = availW / (cols + 2);
+    const byH = availH / (rows + 2);
+    let cell = Math.floor(Math.min(byW, byH));
+    cell = Math.max(BUILD_CELL_MIN, Math.min(BUILD_CELL_MAX, cell));
+    return cell;
+}
+
+let buildRound = null; // { target, correctPair, outlineCells, placed: [...] }
+
+// Cell set for a number in the current style, in local grid coords
+// ({c, r}, r increasing downward, normalized so min c/r = 0).
+function cellsForNumber(n, style) {
+    const cells = [];
+    if (style === 'numberblocks') {
+        const layout = blockColumnLayout(n);
+        const rowsTall = Math.max(...layout);
+        for (let c = 0; c < layout.length; c++) {
+            const h = layout[c];
+            for (let i = 0; i < h; i++) {
+                cells.push({ c, r: rowsTall - 1 - i }); // bottom-aligned column
+            }
+        }
+        return normalizeCells(cells);
+    }
+    // numicon: the outline MUST match createShapeForNumber exactly so the
+    // target we build looks like the number everywhere else in the app.
+    //  - 1..10  -> the single-shape hole grid (createShapeSVG).
+    //  - 11..20 -> the composite (createCompositeSVG): a 2x5 ten at columns
+    //              0-1 plus the remainder shape beside it (columns 2+),
+    //              BOTH bottom-aligned, exactly as drawn.
+    if (n <= 10) {
+        return normalizeCells(numiconSingleCells(n));
+    }
+    const remainder = n - 10;
+    const tenCells = numiconSingleCells(10); // 2x5, rows 0..4
+    const remCells = numiconSingleCells(remainder);
+    const tenRows = 5;
+    const remRows = Math.max(...remCells.map(p => p.r)) + 1;
+    // Bottom-align: ten occupies rows 0..4; remainder's bottom sits on row 4.
+    const totalRows = Math.max(tenRows, remRows);
+    const tenDR = totalRows - tenRows;
+    const remDR = totalRows - remRows;
+    tenCells.forEach(p => cells.push({ c: p.c, r: p.r + tenDR }));
+    remCells.forEach(p => cells.push({ c: p.c + 2, r: p.r + remDR })); // beside the ten
+    return normalizeCells(cells);
+}
+
+// Hole grid for a single Numicon number 1..10, matching createShapeSVG:
+// 1 and 2 are a single column; 3..10 are 2-wide with rows filled top-to-bottom
+// and odd numbers (>1) carrying a single hole in the TOP row (col 0) -- the
+// notch. r increases downward.
+function numiconSingleCells(n) {
+    const cells = [];
+    const cols = (n === 1 || n === 2) ? 1 : 2;
+    const rows = Math.ceil(n / cols);
+    const isOdd = n % 2 === 1 && n > 1;
+    let count = 0;
+    for (let r = 0; r < rows; r++) {
+        const inRow = (isOdd && r === 0) ? 1 : cols;
+        for (let c = 0; c < inRow; c++) {
+            cells.push({ c, r });
+            if (++count >= n) break;
+        }
+        if (count >= n) break;
+    }
+    return cells;
+}
+
+function normalizeCells(cells) {
+    const minC = Math.min(...cells.map(p => p.c));
+    const minR = Math.min(...cells.map(p => p.r));
+    return cells.map(p => ({ c: p.c - minC, r: p.r - minR }));
+}
+
+function cellKey(p) { return `${p.c},${p.r}`; }
+function cellSetSignature(cells) {
+    return normalizeCells(cells).map(cellKey).sort().join('|');
+}
+
+// All distinct orientations (rotations x flip) of a cell set.
+function cellOrientations(cells) {
+    const variants = [];
+    const seen = new Set();
+    for (let flip = 0; flip < 2; flip++) {
+        let c = flip ? cells.map(p => ({ c: -p.c, r: p.r })) : cells;
+        for (let rot = 0; rot < 4; rot++) {
+            const nc = normalizeCells(c);
+            const sig = cellSetSignature(nc);
+            if (!seen.has(sig)) { seen.add(sig); variants.push(nc); }
+            c = c.map(p => ({ c: p.r, r: -p.c })); // rotate 90deg
+        }
+    }
+    return variants;
+}
+
+// Every way `piece` can be dropped to cover a subset of `targetSet` (a Set of
+// cell keys). Returns a list of placed cell arrays.
+function piecePlacements(piece, targetSet) {
+    const out = [];
+    const targets = [...targetSet].map(s => {
+        const [c, r] = s.split(',').map(Number); return { c, r };
+    });
+    for (const o of cellOrientations(piece)) {
+        for (const t of targets) {
+            const dc = t.c - o[0].c;
+            const dr = t.r - o[0].r;
+            const placed = o.map(p => ({ c: p.c + dc, r: p.r + dr }));
+            if (placed.every(p => targetSet.has(cellKey(p)))) out.push(placed);
+        }
+    }
+    return out;
+}
+
+// Does (a, b) exactly partition N's outline in `style`?
+function pairTiles(n, a, b, style) {
+    if (a + b !== n) return false;
+    const target = cellsForNumber(n, style);
+    const targetSet = new Set(target.map(cellKey));
+    const pieceA = cellsForNumber(a, style);
+    for (const placedA of piecePlacements(pieceA, targetSet)) {
+        const remaining = new Set(targetSet);
+        placedA.forEach(p => remaining.delete(cellKey(p)));
+        if (remaining.size !== b) continue;
+        const pieceB = cellsForNumber(b, style);
+        if (piecePlacements(pieceB, remaining).some(pl => pl.length === remaining.size)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// All valid 2-piece partitions (a<=b) of N's outline in `style`.
+function validPairsFor(n, style) {
+    const pairs = [];
+    for (let a = 1; a <= Math.floor(n / 2); a++) {
+        const b = n - a;
+        if (pairTiles(n, a, b, style)) pairs.push([a, b]);
+    }
+    return pairs;
+}
+
+// Can target N in `style` yield a 4-card tray with EXACTLY one solvable pair?
+// Requires a valid pair plus two distinct distractor values from 1..N-1 such
+// that no two of the four tray values form a second valid partition. Small
+// targets (2,3,4) fail this and are excluded from rounds.
+function hasUniqueTrayTarget(n, style) {
+    const pairs = validPairsFor(n, style);
+    if (pairs.length === 0) return false;
+    for (const [a, b] of pairs) {
+        if (pairAdmitsCleanTray(n, a, b, style)) return true;
+    }
+    return false;
+}
+
+// Can this specific correct pair (a,b) be padded with 2 distractors such that
+// NO two tray values (other than a,b) sum to the target? Uses the sum rule so
+// the tray is unambiguous by arithmetic, not just by tiling.
+function pairAdmitsCleanTray(n, a, b, style) {
+    const tray = [a, b];
+    const createsSecond = (v) => tray.some(u => u + v === n);
+    let added = 0;
+    for (let v = 1; v < n; v++) {
+        if (v === a || v === b || tray.includes(v)) continue;
+        if (createsSecond(v)) continue;
+        tray.push(v);
+        if (++added >= 2) return true;
+    }
+    return false;
+}
+
+// Build a fresh round: pick a target N (2..20) that admits a unique-solution
+// 4-card tray in the current style, choose one partition as the correct pair,
+// and assemble 4 tray pieces of which exactly those 2 are correct.
+function newBuildRound() {
+    const style = currentShapeStyle;
+
+    // Candidate targets: must tile AND admit a 4-card tray with exactly one
+    // solvable pair. Very small targets (2, 3, 4) can't supply enough distinct
+    // values without forcing a second valid pair, so they're excluded. The
+    // puzzle is only meaningful once there's room for genuine distractors.
+    const candidates = [];
+    for (let n = 2; n <= 20; n++) {
+        if (hasUniqueTrayTarget(n, style)) candidates.push(n);
+    }
+    if (candidates.length === 0) return null;
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    const pairs = validPairsFor(target, style);
+    // Prefer a correct pair that can be surrounded by 2 clean distractors
+    // (no second solution). Fall back to any valid pair if none qualify.
+    const cleanPairs = pairs.filter(([a, b]) => pairAdmitsCleanTray(target, a, b, style));
+    const pool = cleanPairs.length ? cleanPairs : pairs;
+    const correctPair = pool[Math.floor(Math.random() * pool.length)];
+
+    // Tray pieces: the two correct values plus two distractors. A distractor is
+    // only accepted if it does NOT form a SECOND valid partition with ANY value
+    // already on the tray (correct values or earlier distractors). That keeps
+    // exactly one solvable pair on the tray -- e.g. for target 15 with correct
+    // 10+5, we must reject 12 and 3 together, since 12+3 also tiles 15.
+    const trayValues = [correctPair[0], correctPair[1]];
+
+    // Would adding `v` to the current tray create any valid partnership?
+    const createsSecondSolution = (v) => {
+        return trayValues.some(u => {
+            // Reject if v pairs with an existing tray value to SUM to the
+            // target -- even if that pair wouldn't tile -- so the tray is
+            // unambiguous by arithmetic (only the correct pair adds to N).
+            return u + v === target;
+        });
+    };
+
+    const distractorPool = [];
+    for (let v = 1; v < target; v++) {
+        if (v !== correctPair[0] && v !== correctPair[1]) distractorPool.push(v);
+    }
+    shuffleInPlace(distractorPool);
+    for (const v of distractorPool) {
+        if (trayValues.length >= 4) break;
+        if (trayValues.includes(v)) continue;
+        if (createsSecondSolution(v)) continue; // would add a 2nd solution
+        trayValues.push(v);
+    }
+
+    // Fallback if the no-second-solution rule left us short (small targets):
+    // relax to any distinct value that at least isn't an exact duplicate of a
+    // correct value. Still avoids a second solution where possible.
+    let pad = 1;
+    while (trayValues.length < 4 && pad <= 40) {
+        const v = ((correctPair[0] + pad) % Math.max(1, target - 1)) + 1;
+        if (!trayValues.includes(v) && !createsSecondSolution(v)) {
+            trayValues.push(v);
+        }
+        pad++;
+    }
+    // Last resort (very small targets like 2 or 3): allow duplicates of a
+    // distractor rather than render fewer than 4 cards.
+    pad = 1;
+    while (trayValues.length < 4 && pad <= 40) {
+        const v = ((correctPair[0] + pad) % Math.max(1, target - 1)) + 1;
+        if (!trayValues.includes(v)) trayValues.push(v);
+        pad++;
+    }
+    shuffleInPlace(trayValues);
+
+    buildRound = {
+        target,
+        style,
+        correctPair,
+        outlineCells: cellsForNumber(target, style),
+        trayValues,
+        placed: [], // { value, cells: [{c,r}], el }
+        solved: false
+    };
+    // Precompute THE solution: exact placed cells + orientation for each
+    // correct value, so correct pieces snap to fixed, natural positions (the
+    // leftover always looks exactly like the partner shape) and coloring is
+    // unambiguous. { value -> { cells, rot, flip } }
+    buildRound.solution = solveLayoutForPair(target, correctPair[0], correctPair[1], style);
+    return buildRound;
+}
+
+// Compute one concrete, natural-looking solution for pair (a,b) filling N's
+// outline. Returns { [value]: { cells, rot, flip } } giving each piece's exact
+// placed cells and the orientation used (so we can color/draw it faithfully).
+//
+// Preference order (so the leftover reads as the partner's natural shape):
+//   1. a placement of `a` in its DEFAULT orientation whose remainder `b` fills
+//      in its DEFAULT orientation, then
+//   2. default `a` with any `b`, then
+//   3. any `a` with any `b`.
+// When a === b (e.g. 4+4) the two instances are keyed by index via the caller.
+function solveLayoutForPair(n, a, b, style) {
+    const targetSet = new Set(cellsForNumber(n, style).map(cellKey));
+    const aOris = orientationsWithMeta(a, style);
+    const bDefault = cellsForNumber(b, style);
+
+    let best = null; // { score, aPlace, bPlace }
+    for (const ao of aOris) {
+        for (const aPlaced of placementsOfOrientation(ao.cells, targetSet)) {
+            const remaining = new Set(targetSet);
+            aPlaced.forEach(p => remaining.delete(cellKey(p)));
+            if (remaining.size !== b) continue;
+            const bOris = orientationsWithMeta(b, style);
+            for (const bo of bOris) {
+                const bFit = placementsOfOrientation(bo.cells, remaining)
+                    .find(pl => pl.length === remaining.size);
+                if (!bFit) continue;
+                // Score: prefer default orientations. Weight the SMALLER piece
+                // (b, since a<=b isn't guaranteed here, so compare sizes) more,
+                // so the leftover visually reads as that number's natural shape.
+                const aNonDefault = (ao.rot === 0 && !ao.flip) ? 0 : 1;
+                const bNonDefault = (bo.rot === 0 && !bo.flip) ? 0 : 1;
+                const aSmaller = a <= b;
+                const smallCost = aSmaller ? aNonDefault : bNonDefault;
+                const bigCost = aSmaller ? bNonDefault : aNonDefault;
+                const score = smallCost * 2 + bigCost; // smaller piece default matters most
+                if (!best || score < best.score) {
+                    best = {
+                        score,
+                        a: { value: a, cells: aPlaced, rot: ao.rot, flip: ao.flip },
+                        b: { value: b, cells: bFit, rot: bo.rot, flip: bo.flip }
+                    };
+                }
+                if (best.score === 0) break;
+            }
+            if (best && best.score === 0) break;
+        }
+        if (best && best.score === 0) break;
+    }
+    return best ? { aSlot: best.a, bSlot: best.b } : null;
+}
+
+// Orientations of a value's cells, each tagged with the {rot,flip} that
+// produced it (so we can later draw the piece in that orientation).
+function orientationsWithMeta(value, style) {
+    const base = cellsForNumber(value, style);
+    const out = [];
+    const seen = new Set();
+    for (let flip = 0; flip < 2; flip++) {
+        for (let rot = 0; rot < 4; rot++) {
+            const cells = normalizeCells(base.map(p => applyOrient(p, rot, flip)));
+            const sig = cellSetSignature(cells);
+            if (seen.has(sig)) continue;
+            seen.add(sig);
+            out.push({ cells, rot, flip });
+        }
+    }
+    return out;
+}
+
+// Placements of an already-oriented cell set covering a subset of targetSet.
+function placementsOfOrientation(oriCells, targetSet) {
+    const out = [];
+    const targets = [...targetSet].map(s => {
+        const [c, r] = s.split(',').map(Number); return { c, r };
+    });
+    for (const t of targets) {
+        const dc = t.c - oriCells[0].c;
+        const dr = t.r - oriCells[0].r;
+        const placed = oriCells.map(p => ({ c: p.c + dc, r: p.r + dr }));
+        if (placed.every(p => targetSet.has(cellKey(p)))) out.push(placed);
+    }
+    return out;
+}
+
+function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+// The native grid pitch of a drawn shape, per style (px between cell centers).
+function stylePitch(style) {
+    return style === 'numberblocks' ? 34 /* CUBE */ : HOLE_SPACING;
+}
+
+// Renders a piece using the REAL app shape renderer (createShapeForNumber) in
+// DEFAULT orientation, scaled so one native cell == the current build cell
+// size. Used for the tray cards and the drag ghost, so those are pixel-
+// identical to the panel/learn/quiz rendering. Returns the wrapping <div>,
+// the PAD inset (stage px), and the scaled width/height.
+function buildShapeEl(value) {
+    const style = buildRound ? buildRound.style : currentShapeStyle;
+    const CELL = currentBuildCell();
+    const scale = CELL / stylePitch(style);
+
+    const svg = createShapeForNumber(value);
+    const origW = parseInt(svg.getAttribute('width')) || 1;
+    const origH = parseInt(svg.getAttribute('height')) || 1;
+    svg.setAttribute('width', Math.round(origW * scale));
+    svg.setAttribute('height', Math.round(origH * scale));
+    if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${origW} ${origH}`);
+
+    const el = document.createElement('div');
+    el.style.lineHeight = '0';
+    el.appendChild(svg);
+    return { el, inset: PAD * scale, scale, w: Math.round(origW * scale), h: Math.round(origH * scale) };
+}
+
+// Apply a cell-space orientation: flip (mirror c) then rotate 90*rot CW
+// (screen coords, y down). Used to relate a piece's default layout to its
+// placed layout when coloring a placed piece faithfully.
+function applyOrient(p, rot, flip) {
+    let c = flip ? -p.c : p.c;
+    let r = p.r;
+    for (let i = 0; i < rot; i++) { const nc = -r, nr = c; c = nc; r = nr; }
+    return { c, r };
+}
+
+// Paints a PLACED piece from its final (possibly rotated/flipped) cells, using
+// the same per-cell colors, borders, holes and face as the real renderer, so a
+// placed piece reads the same as the panel/tray. Always grid-aligned (no PAD),
+// which is why placed pieces use this rather than a CSS-rotated real SVG.
+function paintCellsSVG(value, cells, rot = 0, flip = 0) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const CELL = currentBuildCell();
+    const minC = Math.min(...cells.map(p => p.c));
+    const minR = Math.min(...cells.map(p => p.r));
+    const cols = Math.max(...cells.map(p => p.c)) - minC + 1;
+    const rows = Math.max(...cells.map(p => p.r)) - minR + 1;
+    const w = cols * CELL, h = rows * CELL;
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `piece for ${value}`);
+
+    const style = buildRound ? buildRound.style : currentShapeStyle;
+
+    // Map each placed cell back to its default-orientation color index using
+    // the KNOWN orientation (rot,flip). This is exact for composite teens (14)
+    // whose colors differ per cell -- no fragile orientation search.
+    const placedNorm = cells.map(p => ({ c: p.c - minC, r: p.r - minR }));
+    const colorForPlaced = buildPlacedColorLookup(value, style, rot, flip, placedNorm);
+
+    // Determine the head cell (for the Numberblocks face): the default head is
+    // the top of the first column = the cell with min c then min r; map it to
+    // the matching placed cell.
+    placedNorm.forEach((p, i) => {
+        const x = p.c * CELL, y = p.r * CELL;
+        if (style === 'numberblocks') {
+            const rect = document.createElementNS(svgNS, 'rect');
+            rect.setAttribute('x', x);
+            rect.setAttribute('y', y);
+            rect.setAttribute('width', CELL);
+            rect.setAttribute('height', CELL);
+            rect.setAttribute('fill', colorForPlaced.fill(p));
+            const b = colorForPlaced.border(p);
+            rect.setAttribute('stroke', b.color);
+            rect.setAttribute('stroke-width', b.width);
+            svg.appendChild(rect);
+        } else {
+            const rect = document.createElementNS(svgNS, 'rect');
+            rect.setAttribute('x', x + 1);
+            rect.setAttribute('y', y + 1);
+            rect.setAttribute('width', CELL - 2);
+            rect.setAttribute('height', CELL - 2);
+            rect.setAttribute('rx', CORNER_R);
+            rect.setAttribute('fill', colorForPlaced.fill(p));
+            svg.appendChild(rect);
+            const circle = document.createElementNS(svgNS, 'circle');
+            circle.setAttribute('cx', x + CELL / 2);
+            circle.setAttribute('cy', y + CELL / 2);
+            circle.setAttribute('r', CELL * 0.3);
+            circle.setAttribute('fill', 'rgba(255,255,255,0.85)');
+            circle.setAttribute('stroke', 'rgba(0,0,0,0.1)');
+            circle.setAttribute('stroke-width', '1.5');
+            svg.appendChild(circle);
+        }
+    });
+
+    // Numberblocks face on the head cell, matching the real renderer.
+    if (style === 'numberblocks') {
+        const head = colorForPlaced.headPlacedCell;
+        if (head) addNumberblockFace(svg, head.c * CELL, head.r * CELL, CELL);
+    }
+    return svg;
+}
+
+// Builds per-cell color/border lookups for a placed piece by matching its
+// placed cells to the default-orientation cells (whose colors come straight
+// from blockColorsForNumber / blockBordersForNumber / NUMBER_COLORS).
+function buildPlacedColorLookup(value, style, rot, flip, placedNorm) {
+    const defaultCells = cellsForNumber(value, style);
+    // Apply the KNOWN orientation to the default cells; index i still maps to
+    // color i. Normalize so coords match placedNorm, then key -> default index.
+    const mapped = defaultCells.map(p => applyOrient(p, rot, flip));
+    const mn = normalizeCells(mapped);
+    const placedKeyToDefaultIdx = new Map();
+    mn.forEach((p, idx) => placedKeyToDefaultIdx.set(cellKey(p), idx));
+
+    if (style === 'numberblocks') {
+        const colors = blockColorsForNumber(value);
+        const borders = blockBordersForNumber(value);
+        // The head (face) is default index of the top of the first column:
+        // in createNumberblockSVG that's placement index firstColCount-1.
+        const layout = blockColumnLayout(value);
+        const headDefaultIdx = layout[0] - 1;
+        // Find which placed cell maps to that default index.
+        let headPlacedCell = null;
+        placedNorm.forEach(p => {
+            const di = placedKeyToDefaultIdx.get(cellKey(p));
+            if (di === headDefaultIdx) headPlacedCell = p;
+        });
+        return {
+            fill: (p) => {
+                const di = placedKeyToDefaultIdx.get(cellKey(p));
+                const c = colors[di];
+                return c || (Array.isArray(colors) ? colors[0] : colors) || '#888';
+            },
+            border: (p) => {
+                const di = placedKeyToDefaultIdx.get(cellKey(p));
+                return borders[di] || { color: DEFAULT_BORDER, width: 1.5 };
+            },
+            headPlacedCell
+        };
+    }
+    // Numicon: single color for the whole piece (matches createShapeSVG).
+    const color = NUMBER_COLORS[value] || '#888';
+    return { fill: () => color, border: () => ({ color: DEFAULT_BORDER, width: 1.5 }), headPlacedCell: null };
+}
+
+// Build an SVG that traces the outer (and any inner) perimeter of a cell set
+// as line segments: every unit edge that borders exactly one cell. Drawn at
+// the current cell size so it overlays the canvas exactly.
+function buildOutlinePerimeterSVG(cells, cols, rows) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const CELL = currentBuildCell();
+    const w = cols * CELL;
+    const h = rows * CELL;
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('aria-hidden', 'true');
+
+    const occ = new Set(cells.map(cellKey));
+    const has = (c, r) => occ.has(`${c},${r}`);
+
+    // Internal grid lines first (faint), so the outer perimeter draws on top.
+    // An internal edge is shared by two occupied cells; draw each once by only
+    // considering a cell's right and bottom neighbour.
+    const internal = [];
+    cells.forEach(({ c, r }) => {
+        if (has(c + 1, r)) internal.push([c + 1, r, c + 1, r + 1]); // right divider
+        if (has(c, r + 1)) internal.push([c, r + 1, c + 1, r + 1]); // bottom divider
+    });
+    const addLine = (edge, cls) => {
+        const [x1, y1, x2, y2] = edge;
+        const line = document.createElementNS(svgNS, 'line');
+        line.setAttribute('x1', x1 * CELL);
+        line.setAttribute('y1', y1 * CELL);
+        line.setAttribute('x2', x2 * CELL);
+        line.setAttribute('y2', y2 * CELL);
+        if (cls) line.setAttribute('class', cls);
+        svg.appendChild(line);
+    };
+    internal.forEach(e => addLine(e, 'build-outline-divider'));
+
+    // Outer perimeter: every unit edge that borders exactly one cell.
+    const edges = [];
+    cells.forEach(({ c, r }) => {
+        if (!has(c, r - 1)) edges.push([c, r, c + 1, r]);         // top
+        if (!has(c, r + 1)) edges.push([c, r + 1, c + 1, r + 1]); // bottom
+        if (!has(c - 1, r)) edges.push([c, r, c, r + 1]);         // left
+        if (!has(c + 1, r)) edges.push([c + 1, r, c + 1, r + 1]); // right
+    });
+    edges.forEach(e => addLine(e));
+    return svg;
+}
+
+function renderBuildMode() {
+    const stage = document.getElementById('buildStage');
+    const tray = document.getElementById('buildTray');
+    const prompt = document.getElementById('buildPrompt');
+    const feedback = document.getElementById('buildFeedback');
+    const nextBtn = document.getElementById('buildNext');
+    if (!stage || !buildRound) return;
+
+    stage.classList.remove('solved');
+    feedback.textContent = '';
+    nextBtn.textContent = 'Skip';
+
+    prompt.textContent = 'Build the number';
+
+    // Build the sized inner canvas that holds the outline + placed pieces.
+    stage.innerHTML = '';
+    const cells = buildRound.outlineCells;
+    const cols = Math.max(...cells.map(p => p.c)) + 1;
+    const rows = Math.max(...cells.map(p => p.r)) + 1;
+
+    // Scale the cell size so the outline fills as much of the stage as possible
+    // (bigger where there's room), while staying inside the stage with a margin
+    // for overhanging misfit pieces. Falls back to the default if the stage has
+    // no measured size yet.
+    buildRound.cell = computeBuildCell(stage, cols, rows);
+    const CELL = buildRound.cell;
+
+    const canvas = document.createElement('div');
+    canvas.className = 'build-canvas';
+    canvas.style.width = `${cols * CELL}px`;
+    canvas.style.height = `${rows * CELL}px`;
+    stage.appendChild(canvas);
+    buildRound.canvas = canvas;
+
+    // Faint fill behind the pieces so the empty target area reads as a slot.
+    cells.forEach(p => {
+        const cell = document.createElement('div');
+        cell.className = 'build-outline-cell';
+        cell.style.left = `${p.c * CELL}px`;
+        cell.style.top = `${p.r * CELL}px`;
+        cell.style.width = `${CELL}px`;
+        cell.style.height = `${CELL}px`;
+        canvas.appendChild(cell);
+    });
+
+    // A single perimeter outline traced around the silhouette, layered ABOVE
+    // the pieces so the target border is always visible (and turns green on
+    // success). pointer-events:none so it never blocks dragging.
+    const outlineSvg = buildOutlinePerimeterSVG(cells, cols, rows);
+    outlineSvg.classList.add('build-outline-perimeter');
+    canvas.appendChild(outlineSvg);
+    buildRound.outlineSvgEl = outlineSvg;
+
+    // The expected number as a small numeral, inside the stage just below the
+    // outline. Absolutely positioned under the canvas so it tracks the outline
+    // and stays within the dashed draggable area.
+    const targetNum = document.createElement('div');
+    targetNum.className = 'build-target-number';
+    targetNum.setAttribute('aria-hidden', 'true');
+    targetNum.textContent = buildRound.target;
+    targetNum.style.position = 'absolute';
+    targetNum.style.left = '0';
+    targetNum.style.right = '0';
+    targetNum.style.top = `${rows * CELL + 12}px`;
+    canvas.appendChild(targetNum);
+
+    // Tray pieces. Reuses the quiz choice card classes (.quiz-choices /
+    // .quiz-choice) so sizing + mobile scaling match the quiz exactly, with a
+    // number label under each piece.
+    tray.innerHTML = '';
+    buildRound.trayValues.forEach((value, idx) => {
+        const piece = document.createElement('div');
+        piece.className = 'quiz-choice build-piece';
+        piece.dataset.value = value;
+        piece.dataset.trayIdx = idx;
+
+        // Real app renderer (default orientation) == the panel look, and ==
+        // what gets dragged/placed.
+        const { el } = buildShapeEl(value);
+        const svg = el.querySelector('svg');
+        // Let CSS size the shape to fill the card (viewBox preserves aspect),
+        // just like quiz choices do.
+        svg.removeAttribute('width');
+        svg.removeAttribute('height');
+        piece.appendChild(svg);
+
+        const label = document.createElement('span');
+        label.className = 'choice-label';
+        label.textContent = value;
+        piece.appendChild(label);
+
+        piece.addEventListener('mousedown', (e) => startBuildDrag(e, value, idx));
+        piece.addEventListener('touchstart', (e) => startBuildDrag(e, value, idx), { passive: false });
+        tray.appendChild(piece);
+    });
+}
+
+// ---- Build drag & drop ----
+let buildDrag = null;
+
+function startBuildDrag(e, value, trayIdx) {
+    e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const ghost = document.createElement('div');
+    ghost.className = 'drag-ghost';
+    // Real app renderer (default orientation) scaled to the grid; the ghost
+    // includes the shape's PAD border, so the snap math subtracts `inset`.
+    const { el, inset, w, h } = buildShapeEl(value);
+    ghost.appendChild(el);
+    document.body.appendChild(ghost);
+
+    ghost.style.left = (clientX - w / 2) + 'px';
+    ghost.style.top = (clientY - h / 2) + 'px';
+
+    buildDrag = { value, trayIdx, ghost, w, h, inset };
+}
+
+function onBuildDragMove(e) {
+    if (!buildDrag) return;
+    e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    buildDrag.ghost.style.left = (clientX - buildDrag.w / 2) + 'px';
+    buildDrag.ghost.style.top = (clientY - buildDrag.h / 2) + 'px';
+}
+
+function onBuildDragEnd(e) {
+    if (!buildDrag) return;
+    const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    buildDrag.ghost.remove();
+
+    const canvas = buildRound && buildRound.canvas;
+    if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        // The ghost (grid-painted, no PAD) is centered on the cursor, so its
+        // top-left cell sits at cursor - size/2. Convert to a canvas grid cell
+        // and snap.
+        const CELL = currentBuildCell();
+        // The ghost is centered on the cursor and includes PAD; its first cell
+        // top-left sits at cursor - size/2 + inset. Snap that to a grid cell.
+        const contentLeft = (clientX - buildDrag.w / 2 + buildDrag.inset) - rect.left;
+        const contentTop = (clientY - buildDrag.h / 2 + buildDrag.inset) - rect.top;
+        const col = Math.round(contentLeft / CELL);
+        const row = Math.round(contentTop / CELL);
+        // Only place if the drop happened over (or near) the stage.
+        const stage = document.getElementById('buildStage');
+        const sRect = stage.getBoundingClientRect();
+        if (clientX >= sRect.left && clientX <= sRect.right &&
+            clientY >= sRect.top && clientY <= sRect.bottom) {
+            placeBuildPiece(buildDrag.value, buildDrag.trayIdx, col, row);
+        }
+    }
+    buildDrag = null;
+}
+
+// Place a piece (default orientation) at grid (col,row), snapped. For the
+// correct pieces we auto-orient so a valid solution is reachable; distractors
+// just drop in their default orientation and will visibly misfit.
+function placeBuildPiece(value, trayIdx, col, row) {
+    if (!buildRound || buildRound.solved) return;
+
+    // If this tray piece is already placed, remove the old placement first.
+    buildRound.placed = buildRound.placed.filter(pl => {
+        if (pl.trayIdx === trayIdx) { pl.el.remove(); return false; }
+        return true;
+    });
+
+    const base = cellsForNumber(value, buildRound.style);
+
+    // Decide where the piece lands and in what orientation.
+    const placement = chooseBuildPlacement(base, value, col, row);
+
+    const piece = renderPlacedPiece(value, trayIdx, placement.cells, placement);
+    buildRound.placed.push({
+        value, trayIdx, cells: placement.cells,
+        rot: placement.rot, flip: placement.flip, el: piece
+    });
+
+    // Dim the used tray piece.
+    const trayEl = document.querySelector(`.build-piece[data-tray-idx="${trayIdx}"]`);
+    if (trayEl) trayEl.classList.add('used');
+
+    updateBuildState();
+}
+
+// Decide where a dropped piece lands. Uses the PRECOMPUTED solution:
+//
+//  - If `value` is a correct piece and the drop is near its predefined
+//    solution slot (and that slot isn't already taken), it snaps into that
+//    exact slot in the solution's orientation. Because the solution is fixed,
+//    the two correct pieces always compose into the natural silhouette (the
+//    leftover looks exactly like the partner) regardless of drop order.
+//  - Otherwise (distractor, or a correct piece dropped far from its slot) it
+//    drops in default orientation at the snapped grid cell, so it visibly
+//    overhangs / overlaps.
+//
+// Returns { cells, rot, flip }.
+function chooseBuildPlacement(baseCells, value, col, row) {
+    const dropC = col + centroidOffset(baseCells).c;
+    const dropR = row + centroidOffset(baseCells).r;
+    const SNAP_RADIUS = 3.5; // cells
+
+    // Which solution slots correspond to this value (one, or two if a === b).
+    const slots = solutionSlotsForValue(value);
+    // Slots already occupied by a currently placed piece of this value.
+    const takenSigs = new Set(
+        buildRound.placed.filter(pl => pl.value === value)
+            .map(pl => cellSetSignature(pl.cells))
+    );
+
+    let best = null, bestDist = Infinity;
+    for (const slot of slots) {
+        if (takenSigs.has(cellSetSignature(slot.cells))) continue;
+        const cx = slot.cells.reduce((s, p) => s + p.c, 0) / slot.cells.length;
+        const cy = slot.cells.reduce((s, p) => s + p.r, 0) / slot.cells.length;
+        const d = Math.abs(cx - dropC) + Math.abs(cy - dropR);
+        if (d < bestDist) { bestDist = d; best = slot; }
+    }
+    if (best && bestDist <= SNAP_RADIUS) {
+        return { cells: best.cells.map(p => ({ c: p.c, r: p.r })), rot: best.rot, flip: best.flip, snapped: true };
+    }
+
+    // Misfit: drop at the grid cell in DEFAULT orientation, unchanged shape.
+    // `snapped:false` tells the renderer to draw the real shape (not the cell
+    // painter), so an incorrect drop never reshapes the piece.
+    return { cells: baseCells.map(p => ({ c: p.c + col, r: p.r + row })), rot: 0, flip: 0, snapped: false };
+}
+
+// The predefined solution slot(s) for a value: { cells, rot, flip }. Returns
+// both slots when the correct pair is value+value (e.g. 4+4).
+function solutionSlotsForValue(value) {
+    const sol = buildRound.solution;
+    if (!sol) return [];
+    const out = [];
+    if (sol.aSlot.value === value) out.push(sol.aSlot);
+    if (sol.bSlot.value === value) out.push(sol.bSlot);
+    return out;
+}
+
+// Centroid of a normalized cell set relative to its (0,0) anchor.
+function centroidOffset(cells) {
+    const c = cells.reduce((s, p) => s + p.c, 0) / cells.length;
+    const r = cells.reduce((s, p) => s + p.r, 0) / cells.length;
+    return { c, r };
+}
+
+function renderPlacedPiece(value, trayIdx, cells, placement) {
+    const minC = Math.min(...cells.map(p => p.c));
+    const minR = Math.min(...cells.map(p => p.r));
+    const piece = document.createElement('div');
+    piece.className = 'build-placed';
+    piece.dataset.value = value;
+    piece.dataset.trayIdx = trayIdx;
+
+    const CELL = currentBuildCell();
+    if (placement && placement.snapped) {
+        // Correct snap: faithful per-cell painter with the KNOWN orientation,
+        // so composite teens (14) color correctly and rotated pieces align.
+        const svg = paintCellsSVG(value, cells, placement.rot, placement.flip);
+        piece.style.left = `${minC * CELL}px`;
+        piece.style.top = `${minR * CELL}px`;
+        piece.appendChild(svg);
+    } else {
+        // Misfit drop: show the REAL shape unchanged (default orientation), via
+        // the same renderer as the tray/ghost. Positioned at the drop cell but
+        // offset by the shape's PAD inset so its first cell lands on (minC,minR).
+        const { el, inset } = buildShapeEl(value);
+        piece.appendChild(el);
+        piece.style.left = `${minC * CELL - inset}px`;
+        piece.style.top = `${minR * CELL - inset}px`;
+    }
+
+    // Drag a placed piece back out (to the tray / reposition).
+    piece.addEventListener('mousedown', (e) => pickUpPlacedPiece(e, trayIdx));
+    piece.addEventListener('touchstart', (e) => pickUpPlacedPiece(e, trayIdx), { passive: false });
+
+    // Insert BEFORE the perimeter overlay so the outline border stays on top
+    // and remains visible even where a piece covers its cells.
+    const overlay = buildRound.outlineSvgEl;
+    if (overlay && overlay.parentNode === buildRound.canvas) {
+        buildRound.canvas.insertBefore(piece, overlay);
+    } else {
+        buildRound.canvas.appendChild(piece);
+    }
+    return piece;
+}
+
+function pickUpPlacedPiece(e, trayIdx) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!buildRound || buildRound.solved) return;
+    // Remove the placement and re-enable its tray piece, then begin a drag.
+    const pl = buildRound.placed.find(p => p.trayIdx === trayIdx);
+    if (!pl) return;
+    pl.el.remove();
+    buildRound.placed = buildRound.placed.filter(p => p.trayIdx !== trayIdx);
+    const trayEl = document.querySelector(`.build-piece[data-tray-idx="${trayIdx}"]`);
+    if (trayEl) trayEl.classList.remove('used');
+    updateBuildState();
+    startBuildDrag(e, pl.value, trayIdx);
+}
+
+// Recompute misfit flags and the solved state after any placement change.
+function updateBuildState() {
+    if (!buildRound) return;
+    const outlineSet = new Set(buildRound.outlineCells.map(cellKey));
+
+    // Count coverage per cell to detect overlaps.
+    const coverage = new Map();
+    buildRound.placed.forEach(pl => {
+        pl.cells.forEach(c => {
+            const k = cellKey(c);
+            coverage.set(k, (coverage.get(k) || 0) + 1);
+        });
+    });
+
+    // Flag each placed piece as misfit if any of its cells fall outside the
+    // outline or overlap another piece.
+    buildRound.placed.forEach(pl => {
+        const bad = pl.cells.some(c => {
+            const k = cellKey(c);
+            return !outlineSet.has(k) || coverage.get(k) > 1;
+        });
+        pl.el.classList.toggle('misfit', bad);
+    });
+
+    // Solved when every outline cell is covered exactly once and nothing
+    // sits outside the outline.
+    let solved = coverage.size === outlineSet.size;
+    if (solved) {
+        for (const k of outlineSet) {
+            if (coverage.get(k) !== 1) { solved = false; break; }
+        }
+    }
+    if (solved) {
+        for (const k of coverage.keys()) {
+            if (!outlineSet.has(k)) { solved = false; break; }
+        }
+    }
+
+    const stage = document.getElementById('buildStage');
+    const feedback = document.getElementById('buildFeedback');
+    const nextBtn = document.getElementById('buildNext');
+
+    if (solved) {
+        buildRound.solved = true;
+        stage.classList.add('solved');
+        feedback.textContent = `🎉 You built ${buildRound.target}!`;
+        nextBtn.textContent = 'Next ▶';
+        // Transform the two pieces into the proper single number: replace them
+        // with createShapeForNumber(target) filling the outline, so the result
+        // reads as the number itself (one shape, one face) -- like the panel.
+        showSolvedResult();
+    } else {
+        buildRound.solved = false;
+        stage.classList.remove('solved');
+        feedback.textContent = '';
+        nextBtn.textContent = 'Skip';
+    }
+}
+
+// On success, swap the placed pieces for the single target number shape,
+// drawn with the real renderer (matches panel) and sized so its CELL GRID
+// lines up with the outline. The real shapes include a PAD margin around the
+// cells, so we scale by the native cell pitch (cell -> CELL) and position the
+// shape at -PAD*scale; that makes the hole/cube grid coincide with the outline
+// grid, with the shape's thin body margin sitting just inside the border.
+function showSolvedResult() {
+    if (!buildRound || !buildRound.canvas) return;
+    const canvas = buildRound.canvas;
+    const CELL = currentBuildCell();
+
+    // Outline footprint in cells.
+    const cells = buildRound.outlineCells;
+    const cols = Math.max(...cells.map(p => p.c)) + 1;
+    const rows = Math.max(...cells.map(p => p.r)) + 1;
+
+    // Remove the individual placed pieces.
+    buildRound.placed.forEach(pl => pl.el.remove());
+
+    // Draw the target as a SINGLE number painted cell-by-cell over the exact
+    // outline cells (default orientation), so it fills the outline perfectly --
+    // every cell lands on the grid, with one set of colors and one face.
+    const svg = paintCellsSVG(buildRound.target, buildRound.outlineCells, 0, 0);
+    const el = document.createElement('div');
+    el.className = 'build-result';
+    el.style.position = 'absolute';
+    el.style.left = '0px';
+    el.style.top = '0px';
+    el.style.lineHeight = '0';
+    el.appendChild(svg);
+
+    // Insert before the perimeter overlay so the green outline stays on top.
+    const overlay = buildRound.outlineSvgEl;
+    if (overlay && overlay.parentNode === canvas) {
+        canvas.insertBefore(el, overlay);
+    } else {
+        canvas.appendChild(el);
+    }
+}
+
+function nextBuildRound() {
+    newBuildRound();
+    renderBuildMode();
+}
+
+document.addEventListener('mousemove', onBuildDragMove);
+document.addEventListener('mouseup', onBuildDragEnd);
+document.addEventListener('touchmove', onBuildDragMove, { passive: false });
+document.addEventListener('touchend', onBuildDragEnd);
+
 // ============ MODE SWITCHING ============
 
 // The max-number slider caps operands in every quiz mode, so show it in any
@@ -1111,21 +2111,32 @@ function switchMode(mode) {
 
     document.getElementById('learnBtn').classList.toggle('active', mode === 'learn');
     document.getElementById('quizBtn').classList.toggle('active', mode === 'quiz');
+    document.getElementById('buildBtn')?.classList.toggle('active', mode === 'build');
 
     document.getElementById('learnMode').classList.toggle('hidden', mode !== 'learn');
     document.getElementById('quizMode').classList.toggle('hidden', mode !== 'quiz');
-    document.getElementById('operationToggle').classList.toggle('hidden', false);
+    document.getElementById('buildMode')?.classList.toggle('hidden', mode !== 'build');
+    // Build has its own targets, so the Sum/Subtract/Compare toggle is only
+    // meaningful in learn/quiz; hide it in build mode.
+    document.getElementById('operationToggle').classList.toggle('hidden', mode === 'build');
     // Expose the active mode on the body so CSS can adapt the layout
-    // (e.g. hide the shapes palette in quiz mode on mobile, where it isn't
-    // used and would otherwise squeeze the quiz off-screen).
+    // (e.g. hide the shapes palette in quiz/build mode on mobile, where it
+    // isn't used and would otherwise squeeze the content off-screen).
     document.body.classList.toggle('mode-quiz', mode === 'quiz');
     document.body.classList.toggle('mode-learn', mode === 'learn');
+    document.body.classList.toggle('mode-build', mode === 'build');
     updateSumCapVisibility();
 
     if (mode === 'quiz') {
         // Defer so the quiz area has real dimensions (it was display:none until
         // the class toggle above) before renderShapeRow measures it.
         requestAnimationFrame(generateQuizQuestion);
+    } else if (mode === 'build') {
+        // Defer so the stage has real dimensions before we render into it.
+        requestAnimationFrame(() => {
+            newBuildRound();
+            renderBuildMode();
+        });
     }
 }
 
@@ -1153,6 +2164,10 @@ function switchShapeStyle(style) {
     renderLearnMode();
     if (currentMode === 'quiz') {
         generateQuizQuestion();
+    } else if (currentMode === 'build') {
+        // Valid targets differ per style, so start a fresh round.
+        newBuildRound();
+        renderBuildMode();
     }
 }
 
@@ -1215,6 +2230,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('learnBtn')?.addEventListener('click', () => switchMode('learn'));
     document.getElementById('quizBtn')?.addEventListener('click', () => switchMode('quiz'));
+    document.getElementById('buildBtn')?.addEventListener('click', () => switchMode('build'));
+    document.getElementById('buildNext')?.addEventListener('click', nextBuildRound);
     document.getElementById('sumBtn')?.addEventListener('click', () => switchOperation('sum'));
     document.getElementById('subtractBtn')?.addEventListener('click', () => switchOperation('subtract'));
     document.getElementById('compareBtn')?.addEventListener('click', () => switchOperation('compare'));
@@ -1240,5 +2257,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // Re-fit quiz shapes/cards to the resized area. Only re-render before
         // the user has answered, so we don't disrupt feedback on screen.
         if (currentMode === 'quiz' && !quizAnswered) generateQuizQuestion();
+        // Build: re-fit the stage to the new size by re-rendering the current
+        // round. Only when nothing is placed yet, so we never wipe a child's
+        // in-progress (or solved) construction out from under them.
+        if (currentMode === 'build' && buildRound &&
+            buildRound.placed.length === 0 && !buildRound.solved) {
+            renderBuildMode();
+        }
     }));
 });
